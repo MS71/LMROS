@@ -7,10 +7,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
+#include "esp_wifi.h"
 
 #include "ota_server.h"
 
 static const char * TAG = "OTA";
+//static char ota_buff[OTA_BUFF_SIZE] = {};
 
 /*socket*/
 static int connect_socket = 0;
@@ -90,11 +92,28 @@ void ota_server_start()
     	update_partition->subtype, update_partition->address);
 
     int recv_len;
-    char ota_buff[OTA_BUFF_SIZE] = {0};
     bool is_req_body_started = false;
     int content_length = -1;
     int content_received = 0;
 	int n=0;
+    char* ota_buff = malloc(OTA_BUFF_SIZE);
+    if( ota_buff == NULL )
+    {
+        ESP_LOGE(TAG, "can't allocate %d bytes from HEAP",OTA_BUFF_SIZE);
+        return;
+    }
+
+#ifdef CONFIG_PM_ENABLE
+    {
+        wifi_config_t wifi_config = {};
+        if( ESP_OK == esp_wifi_get_config(WIFI_IF_STA, &wifi_config))
+        {
+            ESP_LOGI(TAG, "wifi_config.listen_interval = 1");
+            wifi_config.sta.listen_interval = 1;
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+        }
+    }
+#endif
 
     esp_ota_handle_t ota_handle;
     do {

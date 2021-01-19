@@ -21,6 +21,12 @@
 
 #include "websocket_server.h"
 
+extern float g_ubat;
+extern float g_usolar;
+extern float g_ucharge;
+extern float g_ibat;
+extern float g_temperature;
+
 static QueueHandle_t client_queue;
 const static int client_queue_size = 10;
 
@@ -267,7 +273,7 @@ static void count_task(void* pvParameters) {
   int clients;
   const static char* word = "%i";
   uint8_t n = 0;
-  const int DELAY = 1000 / portTICK_PERIOD_MS; // 1 second
+  const int DELAY = 10000 / portTICK_PERIOD_MS; // 1 second
 
   ESP_LOGI(TAG,"starting task");
   for(;;) {
@@ -276,6 +282,28 @@ static void count_task(void* pvParameters) {
     if(clients > 0) {
       //ESP_LOGI(TAG,"sent: \"%s\" to %i clients",out,clients);
     }
+
+    len = sprintf(out,"H%d",xPortGetFreeHeapSize());
+    clients = ws_server_send_text_all(out,len);
+
+    {
+        struct timeval tv_now;
+        gettimeofday(&tv_now, NULL);
+        len = sprintf(out,"T%d",(int)tv_now.tv_sec);
+        clients = ws_server_send_text_all(out,len);
+    }
+
+    len = sprintf(out,"A%d",(int)(g_ubat*1000));
+    clients = ws_server_send_text_all(out,len);
+    len = sprintf(out,"B%d",(int)(g_usolar*1000));
+    clients = ws_server_send_text_all(out,len);
+    len = sprintf(out,"C%d",(int)(g_ucharge*1000));
+    clients = ws_server_send_text_all(out,len);
+    len = sprintf(out,"D%d",(int)(g_ibat*1000));
+    clients = ws_server_send_text_all(out,len);
+    len = sprintf(out,"E%d",(int)(g_temperature));
+    clients = ws_server_send_text_all(out,len);
+
     n++;
     vTaskDelay(DELAY);
   }

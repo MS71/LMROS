@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <sdkconfig.h>
 
 #include "esp_system.h"
 #include "esp_log.h"
@@ -20,6 +21,9 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_spiffs.h"
+#ifdef CONFIG_PM_ENABLE
+#include "esp_pm.h"
+#endif
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -46,7 +50,9 @@ static vprintf_like_t con_deflog = NULL;
 static char con_log_linebuf[1024];
 static bool shutdown_active = false;
 static bool con_log_on = true;
-
+#ifdef CONFIG_PM_ENABLE
+esp_pm_lock_handle_t con_pmlock;
+#endif
 /**
  * @brief 
  * @return 
@@ -251,6 +257,22 @@ static void con_handle()
                 con_printf("* ros_remote_set          # set the ip and port for the ros host\n");
                 con_printf("* ros_remote_get          # get ip and port for the ros host\n");
                 con_printf("* spifs_info              # show some SPIFS information\n");
+#ifdef CONFIG_PM_ENABLE
+                con_printf("* pmlock                  # lock the power managment\n");
+                con_printf("* pmrel                   # release the power managment\n");
+#ifdef CONFIG_PM_PROFILING
+                con_printf("* pmdump                  # print pm lock infos\n");
+#endif                
+#endif
+                con_printf("* pwron/pwroff            # enable/disable power\n");
+            }
+            else if(strcasecmp("pwroff",rx_buffer)==0 )
+            {
+                powersw(false);
+            }
+            else if(strcasecmp("pwron",rx_buffer)==0 )
+            {
+                powersw(true);
             }
             else if(strcasecmp("restart",rx_buffer)==0 )
             {
@@ -258,6 +280,25 @@ static void con_handle()
                 esp_restart();
                 return;
             }
+#ifdef CONFIG_PM_ENABLE
+            else if(strcasecmp("pmrel", rx_buffer) == 0)
+            {
+                con_printf("pm release ...\n");
+                esp_pm_lock_release(con_pmlock);
+            }
+            else if(strcasecmp("pmlock", rx_buffer) == 0)
+            {
+                con_printf("pm acquire ...\n");
+                esp_pm_lock_acquire(con_pmlock);
+            }
+#ifdef CONFIG_PM_PROFILING
+            else if(strcasecmp("pmlock", rx_buffer) == 0)
+            {
+                con_printf("pm acquire ...\n");
+                esp_pm_dump_locks(stdout);
+            }                        
+#endif            
+#endif
 #ifdef CONFIG_ENABLE_I2C_POWER
             else if(strcasecmp("reboot",rx_buffer)==0 )
             {

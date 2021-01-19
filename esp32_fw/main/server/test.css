@@ -114,3 +114,7 @@ a:active {
   background: #4CAF50;
   cursor: pointer;
 }
+
+table, th, td {
+  border: 1px solid black;
+}

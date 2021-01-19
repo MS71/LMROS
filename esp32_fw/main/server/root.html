@@ -1,16 +1,45 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>ESP32 First Server</title>
+<title>ESP32(-S2) based (micro)ROS(2) Mower</title>
 <link type="text/css" href="test.css" rel="stylesheet"/>
 </head>
 
 <body>
 
-<h1>Hello World!</h1>
-<p>
-  This is being hosted from an ESP32 running freeRTOS. Whattup.
-</p>
+<h1>ESP32(-S2) based (micro)ROS(2) Mower</h1>
+
+ <table>
+  <tr>
+    <td>UpTime:</td>
+    <td><div id="sysuptime"></td>
+  </tr>
+  <tr>
+    <td>free Heap:</td>
+    <td><div id="freeheap"></td>
+  </tr>
+  <tr>
+    <td>Temp:</td>
+    <td><div id="temperatur"></td>
+  </tr>
+  <tr>
+    <td>USolar:</td>
+    <td><div id="usolar"></td>
+  </tr>
+  <tr>
+    <td>UCharge:</td>
+    <td><div id="ucharge"></td>
+  </tr>
+  <tr>
+    <td>UBat:</td>
+    <td><div id="ubat"></td>
+  </tr>
+  <tr>
+    <td>iBat:</td>
+    <td><div id="ibat"></td>
+  </tr>
+</table> 
+
 <p>
   The below bar should change an LED brightness connected to the microcontroller.
   Try it when more than one device is connected!

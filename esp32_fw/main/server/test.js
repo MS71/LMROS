@@ -67,6 +67,27 @@ websocket.onmessage = function(evt) {
       slider.value = value;
       console.log("Led = " + value);
       break;
+    case 'H':
+      document.getElementById("freeheap").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
+    case 'T':
+      document.getElementById("sysuptime").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
+    case 'E':
+      document.getElementById("temperatur").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
+    case 'A':
+      document.getElementById("ubat").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
+    case 'B':
+      document.getElementById("usolar").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
+    case 'C':
+      document.getElementById("ucharge").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
+    case 'D':
+      document.getElementById("ibat").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      break;
     default:
       document.getElementById("output").innerHTML = evt.data;
       break;

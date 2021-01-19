@@ -27,6 +27,10 @@
 #include "freertos/task.h"
 #include "ota_server.h"
 
+#include <driver/adc.h>
+#include <esp_adc_cal.h>
+#include <driver/adc.h>
+#include <driver/adc_common.h>
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -54,10 +58,10 @@
 #include "nvs_flash.h"
 #include "esp32/rom/uart.h"
 #include "sdmmc_cmd.h"
-
-extern "C" {
-//#include "ulp-util.h" // my ulp_init(), ulp_start()
-}
+#include "driver/rtc_io.h"
+#if CONFIG_IDF_TARGET_ESP32S2
+#include "driver/temp_sensor.h"
+#endif
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -80,7 +84,13 @@ extern "C" {
 
 #include "console.h"
 
-#define ENABLE_SLEEP_MODE
+#ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
+#include "esp32/ulp.h"
+#include "ulp_main.h"
+
+extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
+extern const uint8_t ulp_main_bin_end[]   asm("_binary_ulp_main_bin_end");
+#endif
 
 void beep(int onoff);
 
@@ -108,14 +118,16 @@ const int CONNECTED_BIT = BIT0;
 esp_ip4_addr_t s_ip_addr = {};
 uint8_t s_ip_addr_changed = 1;
 
-#ifdef CONFIG_PARTITION_TABLE_CUSTOM
+#if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
 /**
  * @brief 
  * @param param
  */
 static void ota_server_task(void* param)
 {
+    ESP_LOGI(TAG, "ota task #1 ...");
     xEventGroupWaitBits(s_wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
+    ESP_LOGI(TAG, "ota task #2 ...");
     ota_server_start();
     vTaskDelete(NULL);
 }
@@ -397,8 +409,25 @@ void check_wifi_config()
 	    gets(my_wifi_ssid);
 	    printf("\nenter Wifi PSK: ");
 	    gets(my_wifi_psk);
-	}
+	    printf("\ntrying SSID=%s and PSK=%s\n",my_wifi_ssid,my_wifi_psk);
+        char yesbuffer[16] = {};
+	    printf("\nenter YES: ");
+	    gets(yesbuffer);
+        if( strcmp("YES",yesbuffer)==0 )
+        {
+            esp_err_t err = nvs_open("wifi", NVS_READWRITE, &my_handle);
+            if(err == ESP_OK) {
+            //size_t my_wifi_ssid_size = sizeof(my_wifi_ssid);
+            //size_t my_wifi_psk_size = sizeof(my_wifi_psk);
+            nvs_set_str(my_handle, "ssid", my_wifi_ssid);
+            nvs_set_str(my_handle, "psk", my_wifi_psk);
+            nvs_close(my_handle);
+            printf("SSID and PSK stored to nvs\n");
+   	        my_wifi_save_on_connected = false;
+        }
+      }
     }
+  }
 }
 
 /**
@@ -418,6 +447,194 @@ void beep(int onoff)
 #endif
 }
 
+uint8_t g_adccnt = 0;
+float g_ubat = 0.0;
+float g_usolar = 0.0;
+float g_ucharge = 0.0;
+float g_uhal = 0.0;
+float g_ibat = 0.0;
+float g_temperature = -999.0;
+
+static void check_efuse(void)
+{
+#if CONFIG_IDF_TARGET_ESP32
+    //Check if TP is burned into eFuse
+    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK) {
+        printf("eFuse Two Point: Supported\n");
+    } else {
+        printf("eFuse Two Point: NOT supported\n");
+    }
+    //Check Vref is burned into eFuse
+    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_VREF) == ESP_OK) {
+        printf("eFuse Vref: Supported\n");
+    } else {
+        printf("eFuse Vref: NOT supported\n");
+    }
+#elif CONFIG_IDF_TARGET_ESP32S2
+    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK) {
+        printf("eFuse Two Point: Supported\n");
+    } else {
+        printf("Cannot retrieve eFuse Two Point calibration values. Default calibration values will be used.\n");
+    }
+#else
+#error "This example is configured for ESP32/ESP32S2."
+#endif
+}
+
+#define DEFAULT_VREF    1100        //Use adc2_vref_to_gpio() to obtain a better estimate
+#define NO_OF_SAMPLES   4          //Multisampling
+
+static esp_adc_cal_characteristics_t *adc_chars;
+#if CONFIG_IDF_TARGET_ESP32
+static const adc_bits_width_t width = ADC_WIDTH_BIT_12;
+#elif CONFIG_IDF_TARGET_ESP32S2
+static const adc_bits_width_t width = ADC_WIDTH_BIT_13;
+#endif
+static const adc_atten_t atten = ADC_ATTEN_DB_6;
+static const adc_unit_t unit = ADC_UNIT_1;
+
+
+static void print_char_val_type(esp_adc_cal_value_t val_type)
+{
+    if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
+        printf("Characterized using Two Point Value\n");
+    } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
+        printf("Characterized using eFuse Vref\n");
+    } else {
+        printf("Characterized using Default Vref\n");
+    }
+}
+
+float adc1_get_voltage(adc1_channel_t channel,float k)
+{
+        //Configure ADC
+    if (unit == ADC_UNIT_1) {
+        adc1_config_width(width); 
+        adc1_config_channel_atten(channel, atten);
+    } else {
+        adc2_config_channel_atten((adc2_channel_t)channel, atten);
+    }
+    uint32_t adc_reading = 0;
+    //Multisampling
+    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+        if (unit == ADC_UNIT_1) {
+            adc_reading += adc1_get_raw((adc1_channel_t)channel);
+        } else {
+            int raw;
+            adc2_get_raw((adc2_channel_t)channel, width, &raw);
+            adc_reading += raw;
+        }
+    }
+    adc_reading /= NO_OF_SAMPLES;
+    //Convert adc_reading to voltage in mV
+    uint32_t voltage = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
+    return k * voltage;
+}
+
+void powersw(bool onoff)
+{
+#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
+    gpio_num_t gpio = (gpio_num_t)GPIO_PWR_ON;
+    gpio_reset_pin(gpio);
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
+	gpio_set_level(gpio, (onoff==true)?1:0);
+#endif    
+}
+
+static void adc1_timer_callback(void* arg)
+{
+    float k1 = 110.0/10.0;
+    float k2 = 20.0/10.0;
+    g_ubat = adc1_get_voltage(ADC1_CHANNEL_0,k1)/1000.0;
+    g_usolar = adc1_get_voltage(ADC1_CHANNEL_1,k1)/1000.0;
+    g_ucharge = adc1_get_voltage(ADC1_CHANNEL_2,k1)/1000.0;
+    g_uhal = adc1_get_voltage(ADC1_CHANNEL_3,k2)/1000.0;
+    g_ibat = 0.185*(g_uhal-(5.425/2.0));
+    if( g_adccnt < 255 ) g_adccnt++;
+    //temp_sensor_read_celsius(&g_temperature);
+    ESP_LOGI(TAG, "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.3f", g_adccnt, g_ubat,g_usolar,g_ucharge,g_ibat);
+    //ESP_LOGI(TAG, "RAW: ubat=%d", adc1_get_raw((adc1_channel_t)ADC1_CHANNEL_0));
+    
+#if 1
+    if( g_adccnt > 15 )
+    {
+        bool enter_sleep = false;
+        if( g_ubat < 12.5 )
+        {
+            enter_sleep = true;
+        }
+        if( g_usolar > 12.0 )
+        {
+            enter_sleep = false;
+        }
+        if( g_ucharge > 12.0 )
+        {
+            enter_sleep = false;
+        }
+        if( enter_sleep == true )
+        {
+            ESP_LOGW(TAG, "Entering deep sleep (30 minutes)\n\n");
+            esp_sleep_enable_timer_wakeup(60UL * 60UL * 1000000UL); // sleep 1 hour
+            powersw(false);
+            esp_deep_sleep_start();
+            while(1);
+        }
+    }
+#endif
+    
+}
+
+#ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
+static void init_ulp_program(void)
+{
+    esp_err_t err = ulp_load_binary(0, ulp_main_bin_start,
+            (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t));
+    ESP_ERROR_CHECK(err);
+
+#if 0
+    /* Configure ADC channel */
+    /* Note: when changing channel here, also change 'adc_channel' constant
+       in adc.S */
+    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
+#if CONFIG_IDF_TARGET_ESP32
+    adc1_config_width(ADC_WIDTH_BIT_12);
+#elif CONFIG_IDF_TARGET_ESP32S2
+    adc1_config_width(ADC_WIDTH_BIT_13);
+#endif
+#endif
+
+    adc1_ulp_enable();
+
+    /* Set low and high thresholds, approx. 1.35V - 1.75V*/
+    ulp_low_thr = 9000;
+    ulp_high_thr = 10000;
+
+    /* Set ULP wake up period to 20ms */
+    ulp_set_wakeup_period(0, 20000);
+
+    /* Disconnect GPIO12 and GPIO15 to remove current drain through
+     * pullup/pulldown resistors.
+     * GPIO12 may be pulled high to select flash voltage.
+     */
+    rtc_gpio_isolate(GPIO_NUM_1);
+    //rtc_gpio_isolate(GPIO_NUM_15);
+#if CONFIG_IDF_TARGET_ESP32
+    esp_deep_sleep_disable_rom_logging(); // suppress boot messages
+#endif
+}
+
+static void start_ulp_program(void)
+{
+    /* Reset sample counter */
+    ulp_sample_counter = 0;
+
+    /* Start the program */
+    esp_err_t err = ulp_run(&ulp_entry - RTC_SLOW_MEM);
+    ESP_ERROR_CHECK(err);
+}
+#endif
+
 /**
  * @brief main
  */
@@ -428,14 +645,75 @@ void app_main(void);
 void app_main(void)
 {
     beep(1);
-    /* Print chip information */
-    // esp_log_level_set("i2c", ESP_LOG_INFO);
-    // esp_log_level_set("gpio", ESP_LOG_WARN);
+    powersw(false);
+    
+#if 1
+    //Check if Two Point or Vref are burned into eFuse
+    check_efuse();
 
+
+    //Characterize ADC
+    adc_chars = (esp_adc_cal_characteristics_t*)calloc(1, sizeof(esp_adc_cal_characteristics_t));
+    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(unit, atten, width, DEFAULT_VREF, adc_chars);
+    print_char_val_type(val_type);
+
+    temp_sensor_config_t temp_sensor = TSENS_CONFIG_DEFAULT();
+    temp_sensor_get_config(&temp_sensor);
+    temp_sensor.dac_offset = TSENS_DAC_DEFAULT; // DEFAULT: range:-10℃ ~  80℃, error < 1℃.
+    temp_sensor_set_config(temp_sensor);
+    temp_sensor_start();
+    
+    adc1_config_width(width); 
+    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_6);
+    adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_6);
+    adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_6);
+    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_6);
+#endif
+
+#ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
     ESP_LOGI(TAG, "init ULP ...");
-    // ulp_init();
-    // ulp_start();
+    
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (cause != ESP_SLEEP_WAKEUP_ULP) {
+        printf("Not ULP wakeup\n");
+        init_ulp_program();
+    } else {
+        printf("Deep sleep wakeup\n");
+        printf("ULP did %d measurements since last reset\n", ulp_sample_counter & UINT16_MAX);
+        printf("Thresholds:  low=%d  high=%d\n", ulp_low_thr, ulp_high_thr);
+        ulp_last_result &= UINT16_MAX;
+        printf("Value=%d was %s threshold\n", ulp_last_result,
+                ulp_last_result < ulp_low_thr ? "below" : "above");
+    }
+    start_ulp_program();
+#endif
 
+#ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
+    printf("Entering deep sleep\n\n");
+    //ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup() );
+    //esp_sleep_enable_ulp_wakeup();
+    powersw(false);
+    esp_sleep_enable_timer_wakeup(5000000);
+    //esp_deep_sleep_start();
+#endif
+
+#if 0
+    //Continuously sample ADC1
+    while (1) {
+        temp_sensor_read_celsius(&g_temperature);
+        
+        printf("UBat=%3.1f USolar=%3.1f UCharge=%3.1f IBat=%3.1f %4.3f %f\n", 
+            adc1_get_voltage(ADC1_CHANNEL_0,110.0/10.0),
+            adc1_get_voltage(ADC1_CHANNEL_1,110.0/10.0),
+            adc1_get_voltage(ADC1_CHANNEL_2,110.0/10.0),
+            adc1_get_voltage(ADC1_CHANNEL_3,20.0/10.0),
+            0.185*(adc1_get_voltage(ADC1_CHANNEL_3,20.0/10.0)-2500.0)/1000.0,
+            g_temperature);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+#endif
+    
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     ESP_LOGI(TAG, "This is ESP32 chip with %d CPU cores, WiFi%s%s, ", chip_info.cores,
@@ -443,9 +721,13 @@ void app_main(void)
 
     ESP_LOGI(TAG, "silicon revision %d, ", chip_info.revision);
 
-    ESP_LOGI(TAG, "%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
+    ESP_LOGI(TAG, "%dMB %s flash", spi_flash_get_chip_size() / (1024 * 1024),
         (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
 
+    ESP_LOGI(TAG, "heap: %d bytes free",
+        xPortGetFreeHeapSize());
+
+    ESP_LOGI(TAG, "init NVS ...");
     esp_err_t err = nvs_flash_init();
     if(err != ESP_OK) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -454,7 +736,37 @@ void app_main(void)
 
     check_wifi_config();
 
+#if 0
+    gpio_num_t gpio = (gpio_num_t)13;
+    gpio_reset_pin(gpio);
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
+    while(1) 
+	{
+        //ESP_LOGI(TAG, "0");
+		gpio_set_level(gpio, 0);
+		//vTaskDelay(10 / portTICK_PERIOD_MS);
+        //ESP_LOGI(TAG, "1");
+		gpio_set_level(gpio, 1);
+		//vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+#endif
+
+#ifndef CONFIG_ESP32S2_ULP_COPROC_ENABLED
+    const esp_timer_create_args_t adc1_timer_args = {
+            .callback = &adc1_timer_callback,
+            /* name is optional, but may help identify the timer when debugging */
+            .name = "adc1_timer"
+    };
+    esp_timer_handle_t adc1_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&adc1_timer_args, &adc1_timer));
+    /* The timer has been created but is not running yet */
+
+    ESP_ERROR_CHECK(esp_timer_start_periodic(adc1_timer, 1000000));
+#endif
+
 #ifdef CONFIG_ENABLE_SPIFS
+    ESP_LOGI(TAG, "init SPIFS ...");
     esp_vfs_spiffs_conf_t conf = {
         .base_path = "/spiffs", .partition_label = NULL, .max_files = 5, .format_if_mount_failed = true
     };
@@ -499,11 +811,13 @@ void app_main(void)
 #endif
 
 #ifdef CONFIG_ENABLE_I2C
+    ESP_LOGI(TAG, "init I2C ...");
     i2c_handler_init();
 #endif
 
     initialise_wifi();
-#ifdef CONFIG_PARTITION_TABLE_CUSTOM
+#if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
+    ESP_LOGI(TAG, "starting ota ...");
     xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, 5, NULL);
 #endif
 
@@ -517,17 +831,18 @@ void app_main(void)
 #endif
 
 #ifdef CONFIG_ENABLE_SPI
+    ESP_LOGI(TAG, "starting spi ...");
     spihost_init();
-    xTaskCreate(&spihost_test_task, "spihost_test_task", 4096, NULL, 5, NULL);
+    xTaskCreate(&spihost_test_task, "spihost_test_task", 512, NULL, 5, NULL);
 #endif
 
-    //vTaskDelay(3000 / portTICK_PERIOD_MS);
-
 #ifdef CONFIG_ENABLE_ROS2
+    ESP_LOGI(TAG, "starting ros2 ...");
     ros2node_init();
 #endif
 
 #ifdef CONFIG_ENABLE_GPS
+    ESP_LOGI(TAG, "starting gps ...");
     gps_init();
 #endif
 
@@ -537,8 +852,8 @@ void app_main(void)
 
     // my_deflog = esp_log_set_vprintf(my_i2clog);
 
-#ifdef ENABLE_SLEEP_MODE
 #if CONFIG_PM_ENABLE
+    ESP_LOGI(TAG, "starting pm ...");
     // Configure dynamic frequency scaling:
     // maximum and minimum frequencies are set in sdkconfig,
     // automatic light sleep is enabled if tickless idle support is enabled.
@@ -548,23 +863,40 @@ void app_main(void)
     esp_pm_config_esp32_t pm_config = {};
 #endif    
     pm_config.max_freq_mhz = 240;
+#ifdef CONFIG_IDF_TARGET_ESP32S2
+    pm_config.min_freq_mhz = 10;
+#else
     pm_config.min_freq_mhz = 40;
+#endif    
 #if CONFIG_FREERTOS_USE_TICKLESS_IDLE
     pm_config.light_sleep_enable = true;
 #endif
     ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
 #endif // CONFIG_PM_ENABLE
 
-#endif
-
 #ifdef CONFIG_ENABLE_WEBUI
+    ESP_LOGI(TAG, "starting webui ...");
     webui_init();
 #endif
 
     beep(0);
     
-    ESP_LOGI(TAG, "sleep 3 seconds ...");
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    //ESP_LOGI(TAG, "sleep 3 seconds ...");
+    //vTaskDelay(3000 / portTICK_PERIOD_MS);
+
+#if 0
+    while(1)
+    {
+    ESP_LOGE(TAG, "ADC: ubat=%f usol=%f uch=%f Ibat=%f temp=%f",
+        g_ubat,
+        g_usolar,
+        g_ucharge,
+        g_ibat,
+        g_temperature);
+
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+#endif
 
     ESP_LOGI(TAG, "starting console ...");
     console();
@@ -582,10 +914,12 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
 {
     switch(event->event_id) {
     case SYSTEM_EVENT_STA_START:
+        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_START");
         esp_wifi_connect();
         break;
 
     case SYSTEM_EVENT_STA_GOT_IP:
+        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_GOT_IP");
         xEventGroupSetBits(s_wifi_event_group, CONNECTED_BIT);
         s_ip_addr = event->event_info.got_ip.ip_info.ip;
         s_ip_addr_changed = 1;
@@ -615,6 +949,7 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
 	break;
 
     case SYSTEM_EVENT_STA_DISCONNECTED:
+        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_DISCONNECTED");
         esp_wifi_connect();
         xEventGroupClearBits(s_wifi_event_group, CONNECTED_BIT);
         s_ip_addr.addr = 0;
@@ -648,7 +983,7 @@ static void initialise_wifi(void)
     strcpy((char*)wifi_config.sta.ssid, my_wifi_ssid);
     strcpy((char*)wifi_config.sta.password, my_wifi_psk);
 #ifdef CONFIG_PM_ENABLE
-    wifi_config.sta.listen_interval = 10;
+    wifi_config.sta.listen_interval = 50;
 #endif
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));

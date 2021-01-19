@@ -1548,7 +1548,7 @@ void i2c_lidar_handle()
 
 void i2c_scan()
 {
-    ESP_LOGW(TAG, "i2c_task() i2cdetect:");
+    ESP_LOGW(TAG, "i2c_task() i2cdetect ...");
     uint32_t flags_available[256 / 32] = {};
     uint32_t flags_timeout[256 / 32] = {};
     for(int i = 0; i < 128; i += 16)
@@ -1590,6 +1590,7 @@ void i2c_scan()
         }
         ESP_LOGW(TAG, "i2c_task() %s", line);
     }
+    ESP_LOGW(TAG, "i2c_task() i2cdetect ... done");
 }
 
 /**
@@ -1967,7 +1968,7 @@ static void i2c_task(void* param)
         }
         else
         {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+            vTaskDelay(50 / portTICK_PERIOD_MS);
         }
         /*
          * ... WHILE

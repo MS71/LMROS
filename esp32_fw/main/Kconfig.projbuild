@@ -12,6 +12,9 @@ choice
 
     config ROS2NODE_HW_S2
         bool "ESP32-S2"
+
+    config ROS2NODE_HW_S2_MOWER
+        bool "ESP32-S2-MOWER"
 endchoice
 
 config ENABLE_WEBUI
@@ -43,8 +46,12 @@ config ENABLE_SPI
 	bool "Enable SPI Support"
 	default y
 
+config ENABLE_I2C_SLAVE
+	bool "Enable I2C SLave Support"
+	default n
+
 config ENABLE_I2C
-	bool "Enable I2C Support"
+	bool "Enable I2C Master Support"
 	default y
 
 if ENABLE_I2C

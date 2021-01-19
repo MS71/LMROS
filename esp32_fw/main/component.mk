@@ -1,14 +1,23 @@
 #
-# Main Makefile. This is basically the same as a component makefile.
+# ULP support additions to component makefile.
 #
-# This Makefile should, at the very least, just include $(SDK_PATH)/make/component.mk. By default, 
-# this will take the sources in the src/ directory, compile them and link them into 
-# lib(subdirectory_name).a in the build directory. This behaviour is entirely configurable,
-# please read the SDK documents if you need to do this.
+# 1. ULP_APP_NAME must be unique (if multiple components use ULP)
+#    Default value, override if necessary:
+ULP_APP_NAME ?= ulp_$(COMPONENT_NAME)
 #
-ULP_APP_NAME ?= ulp-$(COMPONENT_NAME)
+# 2. Specify all assembly source files here.
+#    Files should be placed into a separate directory (in this case, ulp/),
+#    which should not be added to COMPONENT_SRCDIRS.
 ULP_S_SOURCES = $(addprefix $(COMPONENT_PATH)/ulp/, \
-	blink.S \
+	adc.S \
 	)
-#ULP_EXP_DEP_OBJECTS := main.o ulp-util.o
+#
+# 3. List all the component object files which include automatically
+#    generated ULP export file, $(ULP_APP_NAME).h:
+ULP_EXP_DEP_OBJECTS := ulp_adc_example_main.o
+#
+# 4. Include build rules for ULP program 
 include $(IDF_PATH)/components/ulp/component_ulp_common.mk
+#
+# End of ULP support additions to component makefile.
+#

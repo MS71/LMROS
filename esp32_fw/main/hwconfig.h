@@ -111,7 +111,26 @@
 #endif /* CONFIG_ROS2NODE_HW_S2 */
 /***********************************************************
  */
- 
+
+#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
+
+#define GPS_UART1_TXD 17
+#define GPS_UART1_RXD 18
+
+#define I2C_BUS_PORT 0
+#define I2C_BUS_SDA 13
+#define I2C_BUS_SCL 12
+#define I2C_BUS_INT 4
+
+#define ROS2_NODENAME "s2mower"
+
+
+#define GPIO_PWR_ON 5
+
+#endif /* CONFIG_ROS2NODE_HW_S2_MOWER */
+/***********************************************************
+ */
+  
 #define I2C_VL53LXY_ADDR 0x50
 
 #define I2C_BNO055_ADDR 0x28
@@ -122,6 +141,8 @@
 #ifdef CONFIG_ENABLE_I2C_OLED
 #define OLED_I2C_ADDR  0x78
 #endif
+
+void powersw(bool onoff);
 
 #endif
 
