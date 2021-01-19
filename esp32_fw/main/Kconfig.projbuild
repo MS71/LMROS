@@ -27,7 +27,7 @@ config ENABLE_SPIFS
 
 config ENABLE_ROS2
 	bool "Enable ROS2 Support"
-	default y
+	default n
 
 config ENABLE_SDCARD
 	bool "Enable SDCard Support"
@@ -40,11 +40,11 @@ config ENABLE_BUZZER
 
 config ENABLE_CAMERA
 	bool "Enable CAMERA Support"
-	default y
+	default n
 
 config ENABLE_SPI
 	bool "Enable SPI Support"
-	default y
+	default n
 
 config ENABLE_I2C_SLAVE
 	bool "Enable I2C SLave Support"
@@ -52,24 +52,24 @@ config ENABLE_I2C_SLAVE
 
 config ENABLE_I2C
 	bool "Enable I2C Master Support"
-	default y
+	default n
 
 if ENABLE_I2C
     config ENABLE_I2C_POWER
         bool "Enable I2C Power"
-        default y
+        default n
     config ENABLE_I2C_MOTOR
         bool "Enable I2C Motor"
-        default y
+        default n
     config ENABLE_I2C_OLED
         bool "Enable I2C OLED"
-        default y
+        default n
     config ENABLE_I2C_OLED_SH1106
         bool "Enable I2C OLED SH1106"
         default n
     config ENABLE_I2C_BNO055
         bool "Enable I2C BNO055"
-        default y
+        default n
     config ENABLE_I2C_VL53L0X
         bool "Enable I2C VL53L0X"
         default n
@@ -80,7 +80,7 @@ endif
 
 config ENABLE_GPS
 	bool "Enable GPS Support"
-	default y
+	default n
 
 endmenu
 
