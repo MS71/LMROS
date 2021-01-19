@@ -542,6 +542,7 @@ void powersw(bool onoff)
 #endif    
 }
 
+#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
 static void adc1_timer_callback(void* arg)
 {
     float k1 = 110.0/10.0;
@@ -584,6 +585,7 @@ static void adc1_timer_callback(void* arg)
 #endif
     
 }
+#endif
 
 #ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
 static void init_ulp_program(void)
@@ -647,7 +649,7 @@ void app_main(void)
     beep(1);
     powersw(false);
     
-#if 1
+#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
     //Check if Two Point or Vref are burned into eFuse
     check_efuse();
 
@@ -657,11 +659,13 @@ void app_main(void)
     esp_adc_cal_value_t val_type = esp_adc_cal_characterize(unit, atten, width, DEFAULT_VREF, adc_chars);
     print_char_val_type(val_type);
 
+#ifdef CONFIG_IDF_TARGET_ESP32S2
     temp_sensor_config_t temp_sensor = TSENS_CONFIG_DEFAULT();
     temp_sensor_get_config(&temp_sensor);
     temp_sensor.dac_offset = TSENS_DAC_DEFAULT; // DEFAULT: range:-10℃ ~  80℃, error < 1℃.
     temp_sensor_set_config(temp_sensor);
     temp_sensor_start();
+#endif
     
     adc1_config_width(width); 
     adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_6);
@@ -752,6 +756,7 @@ void app_main(void)
     }
 #endif
 
+#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
 #ifndef CONFIG_ESP32S2_ULP_COPROC_ENABLED
     const esp_timer_create_args_t adc1_timer_args = {
             .callback = &adc1_timer_callback,
@@ -763,6 +768,7 @@ void app_main(void)
     /* The timer has been created but is not running yet */
 
     ESP_ERROR_CHECK(esp_timer_start_periodic(adc1_timer, 1000000));
+#endif
 #endif
 
 #ifdef CONFIG_ENABLE_SPIFS
