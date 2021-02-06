@@ -212,6 +212,30 @@ int con_log(const char *format, va_list args)
 	return 1;
 }
 
+int32_t con_nfs_get_int(const char* topic,const char* name,, int32_t default)
+{
+    int32_t ret = default;
+    nvs_handle my_handle;
+    esp_err_t err = nvs_open(topic, NVS_READWRITE, &my_handle);
+    if(err == ESP_OK)
+    {
+        nvs_get_i32(my_handle, name, &ret);
+        nvs_close(my_handle);
+    }
+    return ret;
+}
+
+void con_nfs_set_int(const char* topic,const char* name,int32_t value)
+{
+    nvs_handle my_handle;
+    esp_err_t err = nvs_open(topic, NVS_READWRITE, &my_handle);
+    if(err == ESP_OK)
+    {
+        nvs_set_i32(my_handle, name, value);
+        nvs_close(my_handle);
+    }
+}
+
 #define RX_BUFFER_SIZE 128
 /**
  * @brief 
@@ -254,6 +278,7 @@ static void con_handle()
                 con_printf("* close                   # close the connection\n");
                 con_printf("* con_remote_set          # set the ip and port for the remote console\n");
                 con_printf("* con_remote_get          # get ip and port for the remote console\n");
+                con_printf("* con_remote_set_loglevel # set the console loglevel\n");                
                 con_printf("* ros_remote_set          # set the ip and port for the ros host\n");
                 con_printf("* ros_remote_get          # get ip and port for the ros host\n");
                 con_printf("* spifs_info              # show some SPIFS information\n");
@@ -445,6 +470,15 @@ static void con_handle()
                     con_printf("remote console host=%s port=%d\n",host_name,host_port);
                 }
             }
+            else if(strstr(rx_buffer,"con_remote_set_loglevel")==rx_buffer)
+            {
+                int p1 = 0;
+                int n = sscanf(rx_buffer,"con_remote_set_loglevel %d",&p2);
+                if( n==1 )
+                {
+                    con_nfs_set_int("console","loglevel",p1);
+                }
+            }
             else if(strstr(rx_buffer,"ros_remote_set")==rx_buffer)
             {
                 char p1[64] = "";
@@ -633,7 +667,10 @@ void console()
     int ip_protocol = 0;
     struct sockaddr_in6 dest_addr;
 
-	con_deflog = esp_log_set_vprintf(con_log);
+    if( con_nfs_get_int("console","loglevel",-1) != -1 )
+    {
+        con_deflog = esp_log_set_vprintf(con_log);
+    }
 
     console_try_remote();
     

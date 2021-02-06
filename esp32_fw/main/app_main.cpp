@@ -816,12 +816,13 @@ void app_main(void)
     }
 #endif
 
+    initialise_wifi();
+
 #ifdef CONFIG_ENABLE_I2C
     ESP_LOGI(TAG, "init I2C ...");
     i2c_handler_init();
 #endif
 
-    initialise_wifi();
 #if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
     ESP_LOGI(TAG, "starting ota ...");
     xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, 5, NULL);
@@ -954,6 +955,10 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
 
 	break;
 
+    case SYSTEM_EVENT_STA_CONNECTED:
+        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_CONNECTED");
+        break;
+
     case SYSTEM_EVENT_STA_DISCONNECTED:
         ESP_LOGW(TAG, "SYSTEM_EVENT_STA_DISCONNECTED");
         esp_wifi_connect();
@@ -968,6 +973,7 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
 	break;
 
     default:
+        ESP_LOGW(TAG, "event_handler() %02x",event->event_id);
 	break;
     }
     return ESP_OK;
@@ -999,9 +1005,9 @@ static void initialise_wifi(void)
 #ifdef CONFIG_PM_ENABLE
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
 #endif
-    ESP_LOGI(TAG, "Connecting to \"%s\"", wifi_config.sta.ssid);
-    xEventGroupWaitBits(s_wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
-    ESP_LOGI(TAG, "Connected");
+    ESP_LOGI(TAG, "Connecting to \"%s\" ... \n", wifi_config.sta.ssid);
+    xEventGroupWaitBits(s_wifi_event_group, CONNECTED_BIT, false, true, 10000 / portTICK_PERIOD_MS);
+    ESP_LOGI(TAG, "... Connected\n");
 }
 
 
