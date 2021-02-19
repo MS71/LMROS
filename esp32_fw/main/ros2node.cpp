@@ -516,10 +516,10 @@ static void r2n_task(void* param)
     RCCHECK(rclc_executor_add_timer(&executor, &timer));
 
     while(r2n_md.active == 1)
-    {
+    {        
         rclc_executor_spin_some(&executor, 10);
 
-        if( rmw_uros_check_agent_status(10) == RMW_RET_OK )
+        if( rmw_uros_ping_agent(10,2) == RMW_RET_OK )
         {
             r2n_md.connected = 1;
         }
@@ -528,7 +528,7 @@ static void r2n_task(void* param)
             r2n_md.connected = 0;
         }
 
-        usleep(1000);
+        usleep(100);
     }
 
     rclc_executor_spin_some(&executor, 100);

@@ -36,7 +36,7 @@ void i2c_setpin_boot(int level);
 #ifdef I2CROS2SENSORDATA_USE_GEOMETRY_MSG_POSE_2D    
 #include <geometry_msgs/msg/pose2_d.h>
 #endif
-#define noI2CROS2SENSORDATA_USE_GEOMETRY_MSG_TF
+#define I2CROS2SENSORDATA_USE_GEOMETRY_MSG_TF
 #ifdef I2CROS2SENSORDATA_USE_GEOMETRY_MSG_TF
 #include <tf2_msgs/msg/tf_message.h>
 #endif

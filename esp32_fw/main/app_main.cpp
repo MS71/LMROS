@@ -646,6 +646,7 @@ void app_main(void);
 
 void app_main(void)
 {
+    EventBits_t ev;
     beep(1);
     powersw(false);
     
@@ -771,6 +772,11 @@ void app_main(void)
 #endif
 #endif
 
+    /* start wifi ...
+     */
+    ESP_LOGI(TAG, "init WIFI ...");
+    initialise_wifi();
+
 #ifdef CONFIG_ENABLE_SPIFS
     ESP_LOGI(TAG, "init SPIFS ...");
     esp_vfs_spiffs_conf_t conf = {
@@ -816,20 +822,10 @@ void app_main(void)
     }
 #endif
 
-    initialise_wifi();
-
 #ifdef CONFIG_ENABLE_I2C
     ESP_LOGI(TAG, "init I2C ...");
     i2c_handler_init();
 #endif
-
-#if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
-    ESP_LOGI(TAG, "starting ota ...");
-    xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, 5, NULL);
-#endif
-
-    // my_deflog = esp_log_set_vprintf(my_log);
-    //ESP_LOGW(TAG, "ready");
 
 #ifdef CONFIG_ENABLE_SDCARD
     sdmmc_init();
@@ -843,9 +839,40 @@ void app_main(void)
     xTaskCreate(&spihost_test_task, "spihost_test_task", 512, NULL, 5, NULL);
 #endif
 
+//#ifdef CONFIG_ENABLE_ROS2
+//        ros2node_stop();
+//#endif
+
+    /* ... WAIT FOR WIFI ...
+     */
+    ESP_LOGI(TAG, "Wait until Wifi Connection ... \n");
+    ev = xEventGroupWaitBits(s_wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
+    ESP_LOGI(TAG, "... Connected\n");
+
+    if(my_wifi_save_on_connected) {
+        my_wifi_save_on_connected = false;
+        nvs_handle my_handle;
+        esp_err_t err = nvs_open("wifi", NVS_READWRITE, &my_handle);
+        if(err == ESP_OK) {
+            nvs_set_str(my_handle, "ssid", my_wifi_ssid);
+            nvs_set_str(my_handle, "psk", my_wifi_psk);
+            nvs_close(my_handle);
+            printf("SSID and PSK stored to nvs\n");
+        }
+    }
+
+#if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
+    ESP_LOGI(TAG, "starting ota ...");
+    xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, 5, NULL);
+#endif
+
+    // my_deflog = esp_log_set_vprintf(my_log);
+    //ESP_LOGW(TAG, "ready");
+
 #ifdef CONFIG_ENABLE_ROS2
     ESP_LOGI(TAG, "starting ros2 ...");
     ros2node_init();
+    ros2node_start();
 #endif
 
 #ifdef CONFIG_ENABLE_GPS
@@ -926,32 +953,19 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
         break;
 
     case SYSTEM_EVENT_STA_GOT_IP:
-        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_GOT_IP");
-        xEventGroupSetBits(s_wifi_event_group, CONNECTED_BIT);
         s_ip_addr = event->event_info.got_ip.ip_info.ip;
+        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_GOT_IP %d.%d.%d.%d",
+            (s_ip_addr.addr >> 0) & 0xff, 
+            (s_ip_addr.addr >> 8) & 0xff,
+            (s_ip_addr.addr >> 16) & 0xff, 
+            (s_ip_addr.addr >> 24) & 0xff);
         s_ip_addr_changed = 1;
-
-        esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
-
-        if(my_wifi_save_on_connected) {
-            my_wifi_save_on_connected = false;
-            nvs_handle my_handle;
-            esp_err_t err = nvs_open("wifi", NVS_READWRITE, &my_handle);
-            if(err == ESP_OK) {
-            //size_t my_wifi_ssid_size = sizeof(my_wifi_ssid);
-            //size_t my_wifi_psk_size = sizeof(my_wifi_psk);
-            nvs_set_str(my_handle, "ssid", my_wifi_ssid);
-            nvs_set_str(my_handle, "psk", my_wifi_psk);
-            nvs_close(my_handle);
-            printf("SSID and PSK stored to nvs\n");
-            }
-        }
-
-        ESP_LOGI(TAG, "Wifi Connected");
-
-#ifdef CONFIG_ENABLE_ROS2
-        ros2node_start();
+           
+#ifdef CONFIG_PM_ENABLE
+        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
 #endif
+
+        xEventGroupSetBits(s_wifi_event_group, CONNECTED_BIT);
 
 	break;
 
@@ -965,10 +979,10 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
         xEventGroupClearBits(s_wifi_event_group, CONNECTED_BIT);
         s_ip_addr.addr = 0;
         s_ip_addr_changed = 1;
-
-#ifdef CONFIG_ENABLE_ROS2
-        ros2node_stop();
-#endif
+        
+#ifdef CONFIG_PM_ENABLE
+        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
+#endif        
         
 	break;
 
@@ -984,30 +998,41 @@ static esp_err_t event_handler(void* ctx, system_event_t* event)
  */
 static void initialise_wifi(void)
 {
-    tcpip_adapter_init();
+    //tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_netif_init());
+
     s_wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
+    
+    //ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+    
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    
+    //ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     //    ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+    
     wifi_config_t wifi_config = {};
     strcpy((char*)wifi_config.sta.ssid, my_wifi_ssid);
     strcpy((char*)wifi_config.sta.password, my_wifi_psk);
-#ifdef CONFIG_PM_ENABLE
     wifi_config.sta.listen_interval = 50;
-#endif
+    /* Setting a password implies station will connect to all security modes including WEP/WPA.
+     * However these modes are deprecated and not advisable to be used. Incase your Access point
+     * doesn't support WPA2, these mode can be enabled by commenting below line */
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.pmf_cfg = {
+                .capable = true,
+                .required = false
+            };
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, "ros2mower");
+    tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, HOSTNAME);
 #ifdef CONFIG_PM_ENABLE
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
 #endif
-    ESP_LOGI(TAG, "Connecting to \"%s\" ... \n", wifi_config.sta.ssid);
-    xEventGroupWaitBits(s_wifi_event_group, CONNECTED_BIT, false, true, 10000 / portTICK_PERIOD_MS);
-    ESP_LOGI(TAG, "... Connected\n");
 }
 
 

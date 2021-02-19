@@ -212,9 +212,9 @@ int con_log(const char *format, va_list args)
 	return 1;
 }
 
-int32_t con_nfs_get_int(const char* topic,const char* name,, int32_t default)
+int32_t con_nfs_get_int(const char* topic,const char* name, int32_t defval)
 {
-    int32_t ret = default;
+    int32_t ret = defval;
     nvs_handle my_handle;
     esp_err_t err = nvs_open(topic, NVS_READWRITE, &my_handle);
     if(err == ESP_OK)
@@ -473,7 +473,7 @@ static void con_handle()
             else if(strstr(rx_buffer,"con_remote_set_loglevel")==rx_buffer)
             {
                 int p1 = 0;
-                int n = sscanf(rx_buffer,"con_remote_set_loglevel %d",&p2);
+                int n = sscanf(rx_buffer,"con_remote_set_loglevel %d",&p1);
                 if( n==1 )
                 {
                     con_nfs_set_int("console","loglevel",p1);
@@ -608,20 +608,11 @@ static void con_handle()
             }
 #endif
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#define CMD_VEL_SPEED       0.1
-#define CMD_VEL_ROTSLOW     (2.0*M_PI / 30.0)  
-#define CMD_VEL_ROTFAST     (2.0*M_PI / 10.0)  
+#define CMD_VEL_SPEED       0.01
+#define CMD_VEL_ROTFAST     (2.0*M_PI / 25.0)  
             else if(strcasecmp("8",rx_buffer)==0)
             {
                 i2c_set_cmd_vel(CMD_VEL_SPEED,0.0,0.0);
-            }
-            else if(strcasecmp("7",rx_buffer)==0)
-            {
-                i2c_set_cmd_vel(CMD_VEL_SPEED,0.0,CMD_VEL_ROTSLOW);
-            }
-            else if(strcasecmp("9",rx_buffer)==0)
-            {
-                i2c_set_cmd_vel(CMD_VEL_SPEED,0.0,-CMD_VEL_ROTSLOW);
             }
             else if(strcasecmp("2",rx_buffer)==0)
             {
@@ -638,14 +629,6 @@ static void con_handle()
             else if(strcasecmp("6",rx_buffer)==0)
             {
                 i2c_set_cmd_vel(0.0,0.0,-CMD_VEL_ROTFAST);
-            }
-            else if(strcasecmp("1",rx_buffer)==0)
-            {
-                i2c_set_cmd_vel(-CMD_VEL_SPEED,0.0,CMD_VEL_ROTSLOW);
-            }
-            else if(strcasecmp("3",rx_buffer)==0)
-            {
-                i2c_set_cmd_vel(-CMD_VEL_SPEED,0.0,-CMD_VEL_ROTSLOW);
             }
 #endif            
             else

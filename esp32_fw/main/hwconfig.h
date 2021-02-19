@@ -93,6 +93,7 @@
 #define CMD_SET_LED             0x07
 
 #define ROS2_NODENAME "ros2zumo"
+#define HOSTNAME "ros2zumo"
 
 #define PWR_KEEP_ALIVE_DELAY    15
 
