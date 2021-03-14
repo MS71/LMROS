@@ -30,7 +30,9 @@
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
 #include <driver/adc.h>
+#ifdef CONFIG_IDF_TARGET_ESP32S2
 #include <driver/adc_common.h>
+#endif
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #ifndef CONFIG_IDF_TARGET_ESP32S2
