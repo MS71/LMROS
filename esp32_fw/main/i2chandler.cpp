@@ -1914,7 +1914,8 @@ static void i2c_task(void* param)
 #endif
 #endif
 
-            i2c_set_cmd_vel( 0.0, 0.0, -2*M_PI / 20.0 /* rad/sec*/ );
+            i2c_set_cmd_vel( 0.0, 0.0, 0.0 /* rad/sec*/ );
+            //i2c_set_cmd_vel( 0.0, 0.0, -2*M_PI / 20.0 /* rad/sec*/ );
             i2c_handle_cmd_vel();
 
 #ifdef CONFIG_ENABLE_I2C_POWER

@@ -1,6 +1,8 @@
 #ifndef _HWCONFIG_H_
 #define _HWCONFIG_H_
 
+#include "sdkconfig.h"
+
 /***********************************************************
  */
 #ifdef CONFIG_ROS2NODE_HW_ROS2MOWER
@@ -108,6 +110,7 @@
 #define I2C_BUS_INT 4
 
 #define ROS2_NODENAME "ros2s2"
+#define HOSTNAME "ros2s2"
 
 #endif /* CONFIG_ROS2NODE_HW_S2 */
 /***********************************************************
@@ -124,6 +127,7 @@
 #define I2C_BUS_INT 4
 
 #define ROS2_NODENAME "s2mower"
+#define HOSTNAME "ros2mower_s2"
 
 
 #define GPIO_PWR_ON 5

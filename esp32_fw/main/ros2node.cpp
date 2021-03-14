@@ -69,6 +69,7 @@ extern "C"
 #include <std_msgs/msg/int16.h>
 #include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/int64.h>
+#include <std_msgs/msg/u_int64.h>
 #include <std_msgs/msg/int8.h>
 #include <std_msgs/msg/string.h>
 
@@ -127,11 +128,13 @@ static struct
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
         rcl_publisher_t pub_range[I2CROS2SENSORDATA_NUM_RANGE];
 #endif
+        ROS2_PUB(std_msgs__msg__UInt64, powerstatus);
     } pub;
     struct
     {
         ROS2_SUB(geometry_msgs__msg__Twist, cmd_vel);
         ROS2_SUB(sensor_msgs__msg__Joy, joy);
+        ROS2_SUB(std_msgs__msg__UInt64, powerrequest);
     } sub;
 } r2n_md = {};
 
@@ -169,6 +172,14 @@ void r2n_cmd_vel_callback(const void* msgin)
     {
         ESP_LOGW(TAG, "r2n_cmd_vel_callback()");
     }
+}
+
+void r2n_powerrequest_callback(const void* msgin)
+{
+    const std_msgs__msg__UInt64* msg = (const std_msgs__msg__UInt64*)msgin;
+      ESP_LOGW(TAG, "r2n_powerrequest_callback() 0x%08x%08x",
+        (uint32_t)(((msg->data)>>32)&0xffffffff),
+        (uint32_t)(((msg->data)>>0)&0xffffffff));
 }
 
 void r2n_joy_callback(const void* msgin)
@@ -488,6 +499,27 @@ static void r2n_task(void* param)
 
     {
         rcl_ret_t rc;
+        std_msgs__msg__UInt64__init(&r2n_md.sub.msg_powerrequest);
+        rc = rclc_executor_add_subscription(
+            &executor, &r2n_md.sub.sub_powerrequest, &r2n_md.sub.msg_powerrequest, &r2n_powerrequest_callback, ALWAYS);
+        if(rc != RCL_RET_OK)
+        {
+            ESP_LOGE(TAG,
+                "ros2node_task() Failed to add powerrequest subscriber "
+                "/" ROS2_NODENAME "/powerrequest");
+            RCCHECK(rc);
+        }
+        else
+        {
+            ESP_LOGI(TAG,
+                "ros2node_task() "
+                "/" ROS2_NODENAME "/powerrequest"
+                " ok");
+        }
+    }
+    
+    {
+        rcl_ret_t rc;
         // sensor_msgs__msg__Joy__init(&r2n_md.sub.msg_joy);
         std_msgs__msg__Header__init(&r2n_md.sub.msg_joy.header);
         r2n_md.sub.msg_joy.header.frame_id.data = (char*)malloc(32);
@@ -500,7 +532,7 @@ static void r2n_task(void* param)
         if(rc != RCL_RET_OK)
         {
             ESP_LOGE(TAG,
-                "ros2node_task() Failed to add subscriber "
+                "ros2node_task() Failed to add joy subscriber "
                 "/" ROS2_NODENAME "/joy");
             RCCHECK(rc);
         }
