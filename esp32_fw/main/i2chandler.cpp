@@ -1039,7 +1039,7 @@ void i2c_handle_encoder(int16_t enc_l, int16_t enc_r)
         i2c_md.ros2_data.msg_odom_tf.pose.pose.position.y = y;
         i2c_md.ros2_data.msg_odom_tf.pose.pose.position.z = 0;
         i2c_md.ros2_data.msg_odom_tf.pose.pose.orientation.w = th;
-        
+
         i2c_md.ros2_data.msg_odom_tf.twist.twist.angular.x = vx;
         i2c_md.ros2_data.msg_odom_tf.twist.twist.angular.y = vy;
         i2c_md.ros2_data.msg_odom_tf.twist.twist.angular.z = vth;
@@ -1109,15 +1109,11 @@ void i2c_init_bno055()
             bno055->setAxisRemap(BNO055_REMAP_CONFIG_P2, BNO055_REMAP_SIGN_P2); // see datasheet, section 3.4
             // xxbno055->setAxisRemap(BNO055_REMAP_CONFIG_P3, BNO055_REMAP_SIGN_P3); // see datasheet, section 3.4
 
-            bno055->setUnits( BNO055_UNIT_ACCEL_MS2, 
-                              BNO055_UNIT_ANGULAR_RATE_RPS, 
-                              BNO055_UNIT_EULER_DEGREES,
-                              BNO055_UNIT_TEMP_C, 
-                              BNO055_DATA_FORMAT_ANDROID);
+            bno055->setUnits(BNO055_UNIT_ACCEL_MS2, BNO055_UNIT_ANGULAR_RATE_RPS, BNO055_UNIT_EULER_DEGREES,
+                BNO055_UNIT_TEMP_C, BNO055_DATA_FORMAT_ANDROID);
 
-			bno055->setAccelConfig( BNO055_CONF_ACCEL_RANGE_4G,
-                                    BNO055_CONF_ACCEL_BANDWIDTH_7_81HZ,
- 									BNO055_CONF_ACCEL_MODE_NORMAL);
+            bno055->setAccelConfig(
+                BNO055_CONF_ACCEL_RANGE_4G, BNO055_CONF_ACCEL_BANDWIDTH_7_81HZ, BNO055_CONF_ACCEL_MODE_NORMAL);
             /* you can specify a PoWeRMode using:
                                     - setPwrModeNormal(); (Default on startup)
                                     - setPwrModeLowPower();
@@ -1132,7 +1128,7 @@ void i2c_init_bno055()
             bno055->clearInterruptPin();
 
             bno055_offsets_t o = {};
-#if 1           
+#if 1
             {
                 nvs_handle my_handle;
                 esp_err_t err = nvs_open("bno055", NVS_READWRITE, &my_handle);
@@ -1143,24 +1139,28 @@ void i2c_init_bno055()
                     if(err == ESP_OK && l == sizeof(o))
                     {
                         ESP_LOGW(TAG, "i2c_init_bno055() ");
-                        
-                        ESP_LOGW(TAG,"i2c_handle_bno055() offsets read from nvs [ax=%d,ay=%d,az=%d,mx=%d,my=%d,mz=%d,gx=%d,gy=%d,gz=%d,ar=%d,mr=%d]",
-                            o.accelOffsetX, o.accelOffsetY, o.accelOffsetZ, 
-                            o.magOffsetX, o.magOffsetY, o.magOffsetZ,
-                            o.gyroOffsetX, o.gyroOffsetY, o.gyroOffsetZ, 
-                            o.accelRadius, o.magRadius);
-                        
-                        if( o.accelRadius < -2048 ) o.accelRadius = -2048;
-                        if( o.accelRadius > 2048 ) o.accelRadius = 2048;
-                        if( o.magRadius < 144 ) o.magRadius = 144;
-                        if( o.magRadius > 1280 ) o.magRadius = 1280;
-                        bno055->setSensorOffsets(o);                            
+
+                        ESP_LOGW(TAG,
+                            "i2c_handle_bno055() offsets read from nvs "
+                            "[ax=%d,ay=%d,az=%d,mx=%d,my=%d,mz=%d,gx=%d,gy=%d,gz=%d,ar=%d,mr=%d]",
+                            o.accelOffsetX, o.accelOffsetY, o.accelOffsetZ, o.magOffsetX, o.magOffsetY, o.magOffsetZ,
+                            o.gyroOffsetX, o.gyroOffsetY, o.gyroOffsetZ, o.accelRadius, o.magRadius);
+
+                        if(o.accelRadius < -2048)
+                            o.accelRadius = -2048;
+                        if(o.accelRadius > 2048)
+                            o.accelRadius = 2048;
+                        if(o.magRadius < 144)
+                            o.magRadius = 144;
+                        if(o.magRadius > 1280)
+                            o.magRadius = 1280;
+                        bno055->setSensorOffsets(o);
                     }
                     nvs_close(my_handle);
                 }
             }
 #endif
-            
+
             o = bno055->getSensorOffsets();
             bno055_calib = bno055->getCalibration();
             bno055_calib_other = bno055_calib.sys + bno055_calib.gyro + bno055_calib.mag + bno055_calib.accel;
@@ -1175,13 +1175,8 @@ void i2c_init_bno055()
             bno055_self_test_result_t st = bno055->getSelfTestResult();
             bno055_system_error_t bno055_error = bno055->getSystemError();
             bno055_system_status_t bno055_status = bno055->getSystemStatus();
-            ESP_LOGW(TAG, "i2c_init_bno055() error=%d status=%d selftest=(%d,%d,%d,%d) BNO055 init done",
-                bno055_error,
-                bno055_status,
-                st.mcuState,
-                st.gyrState,
-                st.magState,
-                st.accState);
+            ESP_LOGW(TAG, "i2c_init_bno055() error=%d status=%d selftest=(%d,%d,%d,%d) BNO055 init done", bno055_error,
+                bno055_status, st.mcuState, st.gyrState, st.magState, st.accState);
         }
         catch(BNO055BaseException& ex)
         {
@@ -1213,41 +1208,50 @@ void i2c_handle_bno055()
                     bno055_error == BNO055_SYSTEM_ERROR_NO_ERROR)
                 {
                     bno055_calib = bno055->getCalibration();
-                                        
-                    if( bno055_calib.sys == 3 && bno055_calib_other < (bno055_calib.sys + bno055_calib.gyro + bno055_calib.mag + bno055_calib.accel) )
+
+                    if(bno055_calib.sys == 3 &&
+                        bno055_calib_other <
+                            (bno055_calib.sys + bno055_calib.gyro + bno055_calib.mag + bno055_calib.accel))
                     {
-                        //ESP_LOGW(TAG, "i2c_handle_bno055() callib sys=%d %d %d %d ", bno055_calib.sys,bno055_calib.gyro,bno055_calib.mag,bno055_calib.accel);
-                        if( bno055_calib.sys == 3 && bno055_calib.gyro > 1 && bno055_calib.mag > 1 && bno055_calib.accel > 1 )
+                        // ESP_LOGW(TAG, "i2c_handle_bno055() callib sys=%d %d %d %d ",
+                        // bno055_calib.sys,bno055_calib.gyro,bno055_calib.mag,bno055_calib.accel);
+                        if(bno055_calib.sys == 3 && bno055_calib.gyro > 1 && bno055_calib.mag > 1 &&
+                            bno055_calib.accel > 1)
                         {
-                            bno055_calib_other = bno055_calib.sys + bno055_calib.gyro + bno055_calib.mag + bno055_calib.accel;
+                            bno055_calib_other =
+                                bno055_calib.sys + bno055_calib.gyro + bno055_calib.mag + bno055_calib.accel;
                             bno055->setOprModeConfig();
                             bno055_offsets_t bno055_offsets = bno055->getSensorOffsets();
                             {
                                 nvs_handle my_handle;
                                 bno055_offsets_t o = {};
                                 esp_err_t err = nvs_open("bno055", NVS_READWRITE, &my_handle);
-                                if(err == ESP_OK) {
+                                if(err == ESP_OK)
+                                {
                                     size_t l = sizeof(o);
                                     err = nvs_get_blob(my_handle, "bno055_offsets", &o, &l);
-                                    if(err == ESP_OK && l == sizeof(o)) {
-                                        if(memcpy(&o, &bno055_offsets, sizeof(bno055_offsets_t)) != 0) {
+                                    if(err == ESP_OK && l == sizeof(o))
+                                    {
+                                        if(memcpy(&o, &bno055_offsets, sizeof(bno055_offsets_t)) != 0)
+                                        {
                                             ESP_LOGW(TAG,
-                                                "i2c_handle_bno055() SAVE/UPDATE calib(%d,%d,%d,%d) [ax=%d,ay=%d,az=%d,mx=%d,my=%d,mz=%d,gx=%d,gy=%d,gz=%d,ar=%d,mr=%d]",
-                                                bno055_calib.sys, bno055_calib.gyro, bno055_calib.mag, bno055_calib.accel,
-                                                o.accelOffsetX, o.accelOffsetY, o.accelOffsetZ, 
-                                                o.magOffsetX, o.magOffsetY, o.magOffsetZ,
-                                                o.gyroOffsetX, o.gyroOffsetY, o.gyroOffsetZ, 
-                                                o.accelRadius, o.magRadius);
-                                            if(err == ESP_OK) {
-                                                nvs_set_blob(
-                                                    my_handle, "bno055_offsets", &bno055_offsets, sizeof(bno055_offsets));
+                                                "i2c_handle_bno055() SAVE/UPDATE calib(%d,%d,%d,%d) "
+                                                "[ax=%d,ay=%d,az=%d,mx=%d,my=%d,mz=%d,gx=%d,gy=%d,gz=%d,ar=%d,mr=%d]",
+                                                bno055_calib.sys, bno055_calib.gyro, bno055_calib.mag,
+                                                bno055_calib.accel, o.accelOffsetX, o.accelOffsetY, o.accelOffsetZ,
+                                                o.magOffsetX, o.magOffsetY, o.magOffsetZ, o.gyroOffsetX, o.gyroOffsetY,
+                                                o.gyroOffsetZ, o.accelRadius, o.magRadius);
+                                            if(err == ESP_OK)
+                                            {
+                                                nvs_set_blob(my_handle, "bno055_offsets", &bno055_offsets,
+                                                    sizeof(bno055_offsets));
                                             }
                                         }
                                     }
                                     nvs_close(my_handle);
                                 }
                             }
-                            bno055->setOprModeNdof();                            
+                            bno055->setOprModeNdof();
                         }
                     }
 
@@ -1314,11 +1318,11 @@ void i2c_handle_bno055()
                 }
                 else
                 {
-                    ESP_LOGE(TAG, "i2c_handle_bno055() temp=%d sw=0x%04x irq-status %d %d %d %d %d error=0x%02x status=0x%02x",
-                        temperature,
-                        bno055->getSWRevision(),
-                        irq_status.accelNoSlowMotion, irq_status.accelAnyMotion, irq_status.accelHighG,
-                        irq_status.gyroHR, irq_status.gyroAnyMotion, bno055_error, bno055_status);
+                    ESP_LOGE(TAG,
+                        "i2c_handle_bno055() temp=%d sw=0x%04x irq-status %d %d %d %d %d error=0x%02x status=0x%02x",
+                        temperature, bno055->getSWRevision(), irq_status.accelNoSlowMotion, irq_status.accelAnyMotion,
+                        irq_status.accelHighG, irq_status.gyroHR, irq_status.gyroAnyMotion, bno055_error,
+                        bno055_status);
                 }
             }
             catch(BNO055BaseException& ex)
@@ -1340,13 +1344,13 @@ void i2c_lidar_init()
 #if 0
     while(1) {
         for(int i = 0; i < MAX_NUM_VL53L0X; i++) {
-            uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
+            uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
             reg &= ~(1 << i);
-            i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+            i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
             vTaskDelay(10 * (1 + i) / portTICK_PERIOD_MS);
             reg |= (1 << i);
             // ESP_LOGW(TAG, "I2CThread() reset vl53l0x %d reg=%04x", i, reg);
-            i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+            i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
             vTaskDelay(1 / portTICK_PERIOD_MS);
         }
     }
@@ -1354,13 +1358,13 @@ void i2c_lidar_init()
 #ifdef CONFIG_ENABLE_I2C_VL53L0X
     for(int i = 0; i < MAX_NUM_VL53L0X; i++)
     {
-        uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
+        uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
         reg &= ~(1 << i);
-        i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+        i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
         vTaskDelay(5 / portTICK_PERIOD_MS);
         reg |= (1 << i);
         // ESP_LOGW(TAG, "I2CThread() reset vl53l0x %d reg=%04x", i, reg);
-        i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+        i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
         vTaskDelay((10) / portTICK_PERIOD_MS);
         if(i2cnode_check(VL53L0X_I2C_ADDRESS_DEFAULT) == ESP_OK)
         {
@@ -1390,13 +1394,13 @@ void i2c_lidar_init()
 #ifdef CONFIG_ENABLE_I2C_VL53L1X
     for(int i = 0; i < MAX_NUM_VL53L1X; i++)
     {
-        uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
+        uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
         reg &= ~(1 << i);
-        i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+        i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
         vTaskDelay(2 / portTICK_PERIOD_MS);
         reg |= (1 << i);
         // ESP_LOGW(TAG, "I2CThread() reset vl53l1x %d reg=%04x", i, reg);
-        i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+        i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
         vTaskDelay((10) / portTICK_PERIOD_MS);
         if(i2cnode_check(VL53L0X_I2C_ADDRESS_DEFAULT) == ESP_OK)
         {
@@ -1477,7 +1481,7 @@ void i2c_lidar_handle()
 #ifdef CONFIG_ENABLE_I2C_VL53L0X
             for(int i = 0; i < MAX_NUM_VL53L0X; i++)
             {
-                if(i2c_md.vl53l0x[i] != NULL && i2c_md.ros2_data.msg_range_valid[i]==false)
+                if(i2c_md.vl53l0x[i] != NULL && i2c_md.ros2_data.msg_range_valid[i] == false)
                 {
                     i2c_md.ros2_data.msg_range[i].range = 0;
                     uint16_t vl53l0x_data = 0;
@@ -1533,7 +1537,7 @@ void i2c_lidar_handle()
 
 #define FRAME_ID_CAPACITY 50
 
-uint8_t i2c_scan_skip[128/8] = {};
+uint8_t i2c_scan_skip[128 / 8] = {};
 void i2c_scan()
 {
     ESP_LOGW(TAG, "i2c_task() i2cdetect ...");
@@ -1544,7 +1548,7 @@ void i2c_scan()
         for(int j = 0; j < 16; j++)
         {
             int k = i + j;
-            if( k >= 8 && k < 120 && (i2c_scan_skip[k/8]&(1<<(k&7)))==0 )
+            if(k >= 8 && k < 120 && (i2c_scan_skip[k / 8] & (1 << (k & 7))) == 0)
             {
                 esp_err_t ret = i2cnode_check(k);
                 if(ret == ESP_OK)
@@ -1566,7 +1570,7 @@ void i2c_scan()
         for(int j = 0; j < 16; j++)
         {
             int k = i + j;
-            if( k >= 8 && k < 120 )
+            if(k >= 8 && k < 120)
             {
                 if((flags_available[i / 32] & (1 << (k & 31))) != 0)
                 {
@@ -1606,7 +1610,7 @@ static void i2c_task(void* param)
 
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
 #ifdef CONFIG_ENABLE_I2C_POWER
-    i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, 0x0000);
+    i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, 0x0000);
 #endif
 #endif
 
@@ -1662,19 +1666,21 @@ static void i2c_task(void* param)
     i2c_md.ros2_data.msg_pose_2d.theta = 0;
 #endif
 #ifdef I2CROS2SENSORDATA_USE_GEOMETRY_MSG_TF
-    geometry_msgs__msg__TransformStamped__Sequence__init(&i2c_md.ros2_data.msg_tf.transforms,1);
-    
+    geometry_msgs__msg__TransformStamped__Sequence__init(&i2c_md.ros2_data.msg_tf.transforms, 1);
+
     sprintf(i2c_md.ros2_data.msg_tf.transforms.data[0].header.frame_id.data, "odom");
-    i2c_md.ros2_data.msg_tf.transforms.data[0].header.frame_id.size = strlen(i2c_md.ros2_data.msg_odom_tf.header.frame_id.data);
+    i2c_md.ros2_data.msg_tf.transforms.data[0].header.frame_id.size =
+        strlen(i2c_md.ros2_data.msg_odom_tf.header.frame_id.data);
     i2c_md.ros2_data.msg_tf.transforms.data[0].header.frame_id.capacity = FRAME_ID_CAPACITY;
 
     i2c_md.ros2_data.msg_tf.transforms.data[0].child_frame_id.data = (char*)malloc(FRAME_ID_CAPACITY * sizeof(char));
     // sprintf(i2c_md.ros2_data.msg_tf.child_frame_id.data, "/base_link");
     sprintf(i2c_md.ros2_data.msg_tf.transforms.data[0].child_frame_id.data, "base_footprint");
-    i2c_md.ros2_data.msg_tf.transforms.data[0].child_frame_id.size = strlen(i2c_md.ros2_data.msg_odom_tf.child_frame_id.data);
+    i2c_md.ros2_data.msg_tf.transforms.data[0].child_frame_id.size =
+        strlen(i2c_md.ros2_data.msg_odom_tf.child_frame_id.data);
     i2c_md.ros2_data.msg_tf.transforms.data[0].child_frame_id.capacity = FRAME_ID_CAPACITY;
 
-    //geometry_msgs__msg__Quaternion__init(&i2c_md.ros2_data.msg_tf.transforms.data[0].transform.rotation);
+    // geometry_msgs__msg__Quaternion__init(&i2c_md.ros2_data.msg_tf.transforms.data[0].transform.rotation);
 
     i2c_md.ros2_data.msg_tf_valid = false;
 #endif
@@ -1709,7 +1715,7 @@ static void i2c_task(void* param)
             PWR_KEEP_ALIVE_DELAY); // shutdown in 10 seconds
         i2cnode_set_u16(STM32_I2C_ADDR, 0x68 /*I2C_REG_TB_U16_TOFF_PERIOD*/, 600);
 
-        i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, 0x0000);
+        i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, 0x0000);
         // i2cnode_set_u16(STM32_I2C_ADDR, 0x64 /*I2C_REG_TB_U16_TON_WDG*/, 10); // set STM32 watchdog timeout to 10
         // seconds ...
 #endif
@@ -1717,10 +1723,10 @@ static void i2c_task(void* param)
 #ifdef CONFIG_ENABLE_I2C_BNO055
         // release BNO055
         {
-            uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
+            uint16_t reg = i2cnode_get_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/);
             reg |= (1 << 15);
             ESP_LOGW(TAG, "i2c_task() rst-reg=0x%04x", reg);
-            i2cnode_set_u16(STM32_I2C_ADDR, 0x70 /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
+            i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, reg);
             vTaskDelay(200 / portTICK_PERIOD_MS);
             {
                 int retry = 20;
@@ -1768,6 +1774,11 @@ static void i2c_task(void* param)
 
     i2cnode_init_motor();
 
+#ifdef CONFIG_ENABLE_I2C_LDS
+    ESP_LOGI(TAG, "i2c_task() I2C enable LDS ...");
+    i2cnode_set_u8(STM32_I2C_ADDR, 0x48 /*I2C_REG_TB_U8_LDS_SPEED*/, 1);
+#endif
+
 #ifdef CONFIG_PM_ENABLE
     esp_pm_lock_release(pmlock);
 #endif
@@ -1783,7 +1794,7 @@ static void i2c_task(void* param)
 #endif
 #endif
 
-    //i2c_scan(); // a i2c scan makes the bno055 non working. dont now why
+    // i2c_scan(); // a i2c scan makes the bno055 non working. dont now why
 
     i2c_md.ready = true;
     while(1)
@@ -1802,6 +1813,26 @@ static void i2c_task(void* param)
         // i2c_setpin_boot(1);
         esp_pm_lock_acquire(pmlock);
         // i2c_setpin_boot(0);
+#endif
+
+#ifdef CONFIG_ENABLE_I2C_LDS
+        {
+            static uint16_t _lds_cnt = 0;
+            uint16_t lds_cnt = 0;
+            uint8_t buf[2+360*4] = {};
+#ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
+            i2cnode_set_u8(STM32_I2C_ADDR, 0x70, 0x00);
+            if(i2cnode_read(STM32_I2C_ADDR, 0x70, buf, 2+360*4) == ESP_OK)
+            {
+                lds_cnt = buf[0]<<8 | buf[1];            
+                ESP_LOGW(TAG, "lds.cnt=0x%04x", lds_cnt);
+                if( lds_cnt != _lds_cnt )
+                {
+                    _lds_cnt = lds_cnt;
+                }
+            }
+#endif
+        }
 #endif
 
 #ifdef CONFIG_ENABLE_I2C_BNO055
@@ -1884,12 +1915,8 @@ static void i2c_task(void* param)
 #endif
 
                 SSD1306_SetFont(&I2CDisplay, &Font_droid_sans_mono_7x13);
-                sprintf(tmpstr, "IP:.%03d IMU:%d%d%d%d   ", 
-                    (s_ip_addr.addr >> 24) & 0xff,
-                    bno055_calib.sys,
-                    bno055_calib.gyro,
-                    bno055_calib.mag,
-                    bno055_calib.accel);
+                sprintf(tmpstr, "IP:.%03d IMU:%d%d%d%d   ", (s_ip_addr.addr >> 24) & 0xff, bno055_calib.sys,
+                    bno055_calib.gyro, bno055_calib.mag, bno055_calib.accel);
                 SSD1306_FontDrawString(&I2CDisplay, 0, y, tmpstr, SSD_COLOR_WHITE);
                 y += (s + 7);
 
@@ -1914,8 +1941,8 @@ static void i2c_task(void* param)
 #endif
 #endif
 
-            i2c_set_cmd_vel( 0.0, 0.0, 0.0 /* rad/sec*/ );
-            //i2c_set_cmd_vel( 0.0, 0.0, -2*M_PI / 20.0 /* rad/sec*/ );
+            i2c_set_cmd_vel(0.0, 0.0, 0.0 /* rad/sec*/);
+            // i2c_set_cmd_vel( 0.0, 0.0, -2*M_PI / 20.0 /* rad/sec*/ );
             i2c_handle_cmd_vel();
 
 #ifdef CONFIG_ENABLE_I2C_POWER

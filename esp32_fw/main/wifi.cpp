@@ -1,5 +1,8 @@
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 
+//#define CONFIG_ROOMING CONFIG_WIFI_ROOMING_RSSI_THRESHOLD
+#define CONFIG_ROOMING 0
+
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
@@ -19,9 +22,6 @@
 #include "esp_vfs_dev.h"
 #include "lwip/apps/sntp.h"
 #include "hwconfig.h"
-
-//#define CONFIG_ROOMING CONFIG_WIFI_ROOMING_RSSI_THRESHOLD
-#define CONFIG_ROOMING 0
 
 static char my_wifi_ssid[64] = {};
 static char my_wifi_psk[64] = {};

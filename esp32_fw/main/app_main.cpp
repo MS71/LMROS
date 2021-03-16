@@ -595,32 +595,6 @@ void app_main(void);
 
 void app_main(void)
 {
-    //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    check_efuse();
-    //Characterize ADC
-    adc_chars = (esp_adc_cal_characteristics_t*)calloc(1, sizeof(esp_adc_cal_characteristics_t));
-    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, DEFAULT_VREF, adc_chars);
-    print_char_val_type(val_type);
-
-    adc1_config_width(ADC_WIDTH_BIT_13); 
-    adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_6);
-
-    wifi_init_sta();
-    
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    ESP_LOGW(TAG, "adc1.0=%d", adc1_get_raw((adc1_channel_t)ADC1_CHANNEL_3));
-}
-#endif
-
-void app_main(void)
-{
     EventBits_t ev;
     beep(1);
     powersw(false);
@@ -737,6 +711,7 @@ void app_main(void)
     ESP_LOGI(TAG, "init WIFI ...");
     initialise_wifi();
 
+#if 0
     vTaskDelay(5000 / portTICK_PERIOD_MS);
     while(1)
     {
@@ -744,6 +719,7 @@ void app_main(void)
             adc1_get_raw((adc1_channel_t)ADC1_CHANNEL_0));
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+#endif
 
 #ifdef CONFIG_ENABLE_SPIFS
     ESP_LOGI(TAG, "init SPIFS ...");
@@ -882,7 +858,7 @@ void app_main(void)
 
     beep(0);
             
-#if 1
+#if 0
     vTaskDelay(10000 / portTICK_PERIOD_MS);
     while(1)
     {
@@ -913,114 +889,6 @@ void app_main(void)
 
     ESP_LOGI(TAG, "... init done. free heap: %u", xPortGetFreeHeapSize());
 }
-
-#if 0
-/**
- * @brief wifi event handler
- * @param ctx
- * @param event
- * @return 
- */
-static esp_err_t event_handler(void* ctx, system_event_t* event)
-{
-    switch(event->event_id) {
-    case SYSTEM_EVENT_STA_START:
-        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_START");
-        esp_wifi_connect();
-        break;
-
-    case SYSTEM_EVENT_STA_GOT_IP:
-    {
-        s_ip_addr = event->event_info.got_ip.ip_info.ip;
-        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_GOT_IP %d.%d.%d.%d",
-            (s_ip_addr.addr >> 0) & 0xff, 
-            (s_ip_addr.addr >> 8) & 0xff,
-            (s_ip_addr.addr >> 16) & 0xff, 
-            (s_ip_addr.addr >> 24) & 0xff);
-        s_ip_addr_changed = 1;
-     
-#ifdef CONFIG_PM_ENABLE
-        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
-#endif
-
-        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-
-        wifi_ap_record_t ap_info = {};
-        esp_wifi_sta_get_ap_info(&ap_info);
-        ESP_LOGW(TAG, "wifi connected rssi=%d ssid=%s bssid=%02x:%02x:%02x:%02x:%02x:%02x channel=%d|%d",ap_info.rssi,ap_info.ssid,ap_info.bssid[0],ap_info.bssid[1],ap_info.bssid[2],ap_info.bssid[3],ap_info.bssid[4],ap_info.bssid[5],ap_info.primary,ap_info.second);
-    }
-	break;
-
-    case SYSTEM_EVENT_STA_CONNECTED:
-        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_CONNECTED");
-        break;
-
-    case SYSTEM_EVENT_STA_DISCONNECTED:
-        ESP_LOGW(TAG, "SYSTEM_EVENT_STA_DISCONNECTED");
-        esp_wifi_connect();
-        xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
-        s_ip_addr.addr = 0;
-        s_ip_addr_changed = 1;
-        
-#ifdef CONFIG_PM_ENABLE
-        ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
-#endif        
-        
-	break;
-
-    default:
-        ESP_LOGW(TAG, "event_handler() %02x",event->event_id);
-	break;
-    }
-    return ESP_OK;
-}
-#endif
-
-#if 0
-/**
- * @brief 
- */
-static void initialise_wifi(void)
-{
-    //tcpip_adapter_init();
-    ESP_ERROR_CHECK(esp_netif_init());
-
-    wifi_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK(esp_event_loop_init(event_handler, NULL));
-    
-    //ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-    
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
-    
-    //ESP_LOGW(TAG, "initialise_wifi() ssid=%s ",my_wifi_ssid);
-    wifi_config_t wifi_config = {};
-    strcpy((char*)wifi_config.sta.ssid, my_wifi_ssid);
-    strcpy((char*)wifi_config.sta.password, my_wifi_psk);
-    wifi_config.sta.listen_interval = 50;
-    /* Setting a password implies station will connect to all security modes including WEP/WPA.
-     * However these modes are deprecated and not advisable to be used. Incase your Access point
-     * doesn't support WPA2, these mode can be enabled by commenting below line */
-    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;    
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    wifi_config.sta.pmf_cfg = {
-                .capable = true,
-                .required = false
-            };
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, HOSTNAME);
-#ifdef CONFIG_PM_ENABLE
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
-#endif
-}
-#endif
 
 /**
  * EOF

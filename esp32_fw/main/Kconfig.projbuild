@@ -70,6 +70,9 @@ if ENABLE_I2C
     config ENABLE_I2C_OLED
         bool "Enable I2C OLED"
         default n
+    config ENABLE_I2C_LDS
+        bool "Enable I2C LDS"
+        default n
     config ENABLE_I2C_OLED_SH1106
         bool "Enable I2C OLED SH1106"
         default n
