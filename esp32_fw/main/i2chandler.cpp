@@ -1867,7 +1867,7 @@ static void i2c_task(void* param)
 #endif
 
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#ifdef CONFIG_ROS2NODE_HW_ROS2MOWER
+#if defined(CONFIG_ROS2NODE_HW_ROS2MOWER) || defined(CONFIG_ROS2NODE_HW_S2_MOWER)
             uint64_t t_mot = i2cnode_get_u64(MOTORNODE_I2C_ADDR, 0x00);
             i2cnode_set_u16(MOTORNODE_I2C_ADDR, 0x0A, 0xffff); // TWI_REG_U16_AUTOBREAK
 

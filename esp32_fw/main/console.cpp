@@ -361,7 +361,7 @@ static void con_handle()
                 /* i2cget i2caddr regaddr numbytes repeats
 				 * i2cget 0x0a 0x00 32 10000000
                  */
-				 int errcnt = 0;
+                int errcnt = 0;
                 int p1 = 0;
                 int p2 = 0;
                 int p3 = 0;

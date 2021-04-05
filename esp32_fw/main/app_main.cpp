@@ -400,14 +400,23 @@ void powersw(bool onoff)
 {
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
     ESP_LOGE(TAG, "powersw %d",onoff);
-    gpio_num_t gpio = (gpio_num_t)GPIO_PWR_ON;
-    //gpio_reset_pin(gpio);
-    /* Set the GPIO as a push/pull output */
+    gpio_num_t gpio;
+    gpio = (gpio_num_t)GPIO_PWR_ON;
     gpio_hold_dis(gpio);
     gpio_set_pull_mode(gpio, GPIO_PULLUP_PULLDOWN);
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
 	gpio_set_level(gpio, (onoff==true)?1:0);
     gpio_hold_en(gpio);
+
+#if 0
+    gpio = (gpio_num_t)GPIO_PWR_BUS_ON;
+    gpio_hold_dis(gpio);
+    gpio_set_pull_mode(gpio, GPIO_PULLUP_PULLDOWN);
+    gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
+	gpio_set_level(gpio, (onoff==true)?1:0);
+    gpio_hold_en(gpio);
+#endif    
+    
 #endif    
 }
 
@@ -479,15 +488,20 @@ float adc1_get_voltage(adc1_channel_t channel,float k)
 static void adc1_timer_callback(void* arg)
 {
     float k1 = 110.0/10.0;
-    float k2 = 20.0/10.0;
+    float k2 = (2.505/2.816) * (20.0/10.0);
     g_ubat = adc1_get_voltage(ADC1_CHANNEL_0,k1)/1000.0;
     g_usolar = adc1_get_voltage(ADC1_CHANNEL_1,k1)/1000.0;
     g_ucharge = adc1_get_voltage(ADC1_CHANNEL_2,k1)/1000.0;
     g_uhal = adc1_get_voltage(ADC1_CHANNEL_3,k2)/1000.0;
-    g_ibat = 0.185*(g_uhal-(5.035/2.0));
+    g_ibat = /*(46.7/2.127) **/ 0.185 * (g_uhal-(5.033/2.0));
+    //g_ibat = g_uhal;
     if( g_adccnt < 255 ) g_adccnt++;
-    
-    ESP_LOGW(TAG, "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f", g_adccnt, g_ubat,g_usolar,g_ucharge,g_ibat);
+
+    wifi_ap_record_t ap_info = {};
+    esp_wifi_sta_get_ap_info(&ap_info);
+    ESP_LOGW(TAG, "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f rssi=%d bssid=%02x:%02x:%02x:%02x:%02x:%02x channel=%d|%d", 
+        g_adccnt, g_ubat,g_usolar,g_ucharge,g_ibat,
+        ap_info.rssi,ap_info.bssid[0],ap_info.bssid[1],ap_info.bssid[2],ap_info.bssid[3],ap_info.bssid[4],ap_info.bssid[5],ap_info.primary,ap_info.second);
     
     bool enter_sleep = false;
     
@@ -502,11 +516,11 @@ static void adc1_timer_callback(void* arg)
         {
             enter_sleep = true;
         }
-        if( g_usolar > 12.5 )
+        if( g_usolar > (13.8+0.3) )
         {
             enter_sleep = false;
         }
-        if( g_ucharge > 12.5 )
+        if( g_ucharge > (13.8+0.3) )
         {
             enter_sleep = false;
         }
@@ -523,6 +537,7 @@ static void adc1_timer_callback(void* arg)
             enter_sleep = true;
         }
     }
+    //enter_sleep = false;
     if( enter_sleep == true )
     {
         ESP_LOGW(TAG, "Entering deep sleep (30 minutes)");
@@ -691,7 +706,7 @@ void app_main(void)
     check_wifi_config();
 
 #if 0
-    gpio_num_t gpio = (gpio_num_t)13;
+    gpio_num_t gpio = (gpio_num_t)GPS_UART1_TXD;
     gpio_reset_pin(gpio);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
@@ -699,10 +714,10 @@ void app_main(void)
 	{
         //ESP_LOGI(TAG, "0");
 		gpio_set_level(gpio, 0);
-		//vTaskDelay(10 / portTICK_PERIOD_MS);
+		vTaskDelay(10 / portTICK_PERIOD_MS);
         //ESP_LOGI(TAG, "1");
 		gpio_set_level(gpio, 1);
-		//vTaskDelay(10 / portTICK_PERIOD_MS);
+		vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 #endif
         
@@ -805,7 +820,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_timer_create(&adc1_timer_args, &adc1_timer));
     /* The timer has been created but is not running yet */
 
-    //ESP_ERROR_CHECK(esp_timer_start_periodic(adc1_timer, 1000000));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(adc1_timer, 1000000));
 #endif
 #endif
 

@@ -118,8 +118,8 @@
 
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
 
-#define GPS_UART1_TXD 17
-#define GPS_UART1_RXD 18
+#define GPS_UART1_TXD 18
+#define GPS_UART1_RXD 17
 
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA 13
@@ -129,8 +129,12 @@
 #define ROS2_NODENAME "s2mower"
 #define HOSTNAME "ros2mower_s2"
 
+#ifdef CONFIG_ENABLE_I2C_MOTOR
+#define MOTORNODE_I2C_ADDR  0x0a
+#endif
 
 #define GPIO_PWR_ON 5
+//#define GPIO_PWR_BUS_ON 25
 
 #endif /* CONFIG_ROS2NODE_HW_S2_MOWER */
 /***********************************************************

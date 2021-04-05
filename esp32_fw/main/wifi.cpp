@@ -1,7 +1,7 @@
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 
-//#define CONFIG_ROOMING CONFIG_WIFI_ROOMING_RSSI_THRESHOLD
-#define CONFIG_ROOMING 0
+#define CONFIG_ROOMING CONFIG_WIFI_ROOMING_RSSI_THRESHOLD
+//#define CONFIG_ROOMING 1
 
 #include <string.h>
 #include <stdlib.h>
@@ -127,7 +127,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 #endif        
 
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
-#if CONFIG_ROOMING
+#if CONFIG_ROOMING!=0
 		if (CONFIG_ROOMING) {
 			ESP_LOGI(TAG, "setting rssi threshold as %d\n", CONFIG_ROOMING);
 			esp_wifi_set_rssi_threshold(CONFIG_ROOMING);
@@ -149,10 +149,6 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
 #if 1
-        sntp_setoperatingmode(SNTP_OPMODE_POLL);
-        sntp_setservername(0, "pool.ntp.org");
-        sntp_init();
-
         wifi_ap_record_t ap_info = {};
         esp_wifi_sta_get_ap_info(&ap_info);
         ESP_LOGW(TAG, "wifi connected rssi=%d ssid=%s bssid=%02x:%02x:%02x:%02x:%02x:%02x channel=%d|%d",ap_info.rssi,ap_info.ssid,ap_info.bssid[0],ap_info.bssid[1],ap_info.bssid[2],ap_info.bssid[3],ap_info.bssid[4],ap_info.bssid[5],ap_info.primary,ap_info.second);
@@ -417,7 +413,7 @@ cleanup:
 /**
  * @brief esp_bss_rssi_low_handler
  */
-#if CONFIG_ROOMING
+#if CONFIG_ROOMING!=0
 static void esp_bss_rssi_low_handler(void* arg, esp_event_base_t event_base,
 		int32_t event_id, void* event_data)
 {
@@ -447,7 +443,7 @@ void initialise_wifi(void)
 	sta_netif = esp_netif_create_default_wifi_sta();
 	assert(sta_netif);
 
-#if CONFIG_ROOMING
+#if CONFIG_ROOMING!=0
 #if !defined(CONFIG_WPA_11KV_SUPPORT) || !defined(CONFIG_WPA_SCAN_CACHE)
 #error enable CONFIG_WPA_11KV_SUPPORT
 #error enable CONFIG_WPA_SCAN_CACHE
@@ -457,23 +453,26 @@ void initialise_wifi(void)
 	ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
 	ESP_ERROR_CHECK( esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL) );
 	ESP_ERROR_CHECK( esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL) );
-#if CONFIG_ROOMING
+#if CONFIG_ROOMING!=0
 	ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_BSS_RSSI_LOW,
 				&esp_bss_rssi_low_handler, NULL));
 #endif
 
-	ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+	ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_FLASH) );
     wifi_config_t wifi_config = {};
     strcpy((char*)wifi_config.sta.ssid, my_wifi_ssid);
     strcpy((char*)wifi_config.sta.password, my_wifi_psk);
 #ifdef CONFIG_PM_ENABLE
-    wifi_config.sta.listen_interval = 10;
+    wifi_config.sta.listen_interval = 20;
 #endif
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     wifi_config.sta.rm_enabled = 1;
     wifi_config.sta.btm_enabled = 1;
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
 
-	ESP_LOGI(TAG, "Setting WiFi configuration SSID %s ...", wifi_config.sta.ssid);
+	ESP_LOGI(TAG, "Setting WiFi configuration SSID %s RSSI_THRESHOLD=%d ...", 
+        wifi_config.sta.ssid,CONFIG_ROOMING);
 	ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
 	ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
 	ESP_ERROR_CHECK( esp_wifi_start() );
@@ -481,6 +480,10 @@ void initialise_wifi(void)
 #ifdef CONFIG_PM_ENABLE
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
 #endif
+
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
 }
 
 /**
