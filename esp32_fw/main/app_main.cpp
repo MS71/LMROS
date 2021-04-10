@@ -489,10 +489,12 @@ static void adc1_timer_callback(void* arg)
 {
     float k1 = 110.0/10.0;
     float k2 = (2.505/2.816) * (20.0/10.0);
+    adc_power_acquire();
     g_ubat = adc1_get_voltage(ADC1_CHANNEL_0,k1)/1000.0;
     g_usolar = adc1_get_voltage(ADC1_CHANNEL_1,k1)/1000.0;
     g_ucharge = adc1_get_voltage(ADC1_CHANNEL_2,k1)/1000.0;
     g_uhal = adc1_get_voltage(ADC1_CHANNEL_3,k2)/1000.0;
+    adc_power_release();
     g_ibat = /*(46.7/2.127) **/ 0.185 * (g_uhal-(5.033/2.0));
     //g_ibat = g_uhal;
     if( g_adccnt < 255 ) g_adccnt++;
@@ -537,7 +539,6 @@ static void adc1_timer_callback(void* arg)
             enter_sleep = true;
         }
     }
-    //enter_sleep = false;
     if( enter_sleep == true )
     {
         ESP_LOGW(TAG, "Entering deep sleep (30 minutes)");
@@ -613,6 +614,7 @@ void app_main(void)
     EventBits_t ev;
     beep(1);
     powersw(false);
+    //powersw(true);
 
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
     //Check if Two Point or Vref are burned into eFuse
@@ -706,7 +708,8 @@ void app_main(void)
     check_wifi_config();
 
 #if 0
-    gpio_num_t gpio = (gpio_num_t)GPS_UART1_TXD;
+    powersw(true);
+    gpio_num_t gpio = (gpio_num_t)I2C_BUS_SCL;
     gpio_reset_pin(gpio);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);

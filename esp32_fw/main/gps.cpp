@@ -33,9 +33,9 @@ static const char* TAG = "GPS";
 
 #define PORT 20000
 
-#define RXBUF_SIZE 128
+#define RXBUF_SIZE 256
 
-static void tcp_server_task(void* pvParameters)
+static void gps_server_task(void* pvParameters)
 {
     ESP_LOGI(TAG, "tcp_server_task TXD=%d RXD=%d", GPS_UART1_TXD, GPS_UART1_RXD);
 
@@ -47,7 +47,7 @@ static void tcp_server_task(void* pvParameters)
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_APB,
+        .source_clk = UART_SCLK_REF_TICK,
     };
 
     int intr_alloc_flags = 0;
@@ -72,28 +72,6 @@ static void tcp_server_task(void* pvParameters)
         addr_family = AF_INET6;
         ip_protocol = IPPROTO_IPV6;
         inet6_ntoa_r(destAddr.sin6_addr, addr_str, sizeof(addr_str) - 1);
-        
-#if 0
-        {
-            uint8_t rx_buffer[RXBUF_SIZE];
-            while (1) {
-                // Read data from the UART
-                int len = uart_read_bytes(UART_NUM_1, rx_buffer, RXBUF_SIZE, 1 / portTICK_RATE_MS);
-                // Write data back to the UART
-                uart_write_bytes(UART_NUM_1, (const char *) rx_buffer, len);
-            }
-        }
-
-#endif
-
-#if 0
-        char initstr[] = "!UBX CFG-GNSS 0 32 32 1 0 10 32 0 1\n"
-                         "!UBX CFG-GNSS 0 32 32 1 6 8 16 0 1\n"
-                         "!UBX CFG-MSG 3 15 0 1 0 1 0 0\n"
-                         "!UBX CFG-MSG 3 16 0 1 0 1 0 0\n"
-                         "!UBX CFG-MSG 1 32 0 1 0 1 0 0\n";
-        uart_write_bytes(UART_NUM_1, initstr, sizeof(initstr));
-#endif
 
         int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
         if(listen_sock < 0)
@@ -109,9 +87,9 @@ static void tcp_server_task(void* pvParameters)
             ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
             break;
         }
-        ESP_LOGI(TAG, "Socket binded");
+        ESP_LOGI(TAG, "Socket bond");
 
-        //uart_flush(UART_NUM_1);
+        uart_flush(UART_NUM_1);
         
         while(1)
         {
@@ -122,7 +100,6 @@ static void tcp_server_task(void* pvParameters)
                 ESP_LOGE(TAG, "Error occured during listen: errno %d", errno);
                 break;
             }
-            ESP_LOGI(TAG, "Socket listening");
 
             struct sockaddr_in6 sourceAddr; // Large enough for both IPv4 or IPv6
             uint addrLen = sizeof(sourceAddr);
@@ -132,14 +109,30 @@ static void tcp_server_task(void* pvParameters)
                 ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
                 break;
             }
-            ESP_LOGI(TAG, "Socket accepted");
 
-            while(1)
+
+#if 1
+/*
+!UBX CFG-GNSS 0 32 32 1 0 10 32 0 1
+!UBX CFG-GNSS 0 32 32 1 6 8 16 0 1
+!UBX CFG-MSG 3 15 0 1 0 1 0 0
+!UBX CFG-MSG 3 16 0 1 0 1 0 0
+!UBX CFG-MSG 1 32 0 1 0 1 0 0
+ */
+            ESP_LOGW(TAG, "send UBX rtklib init ...");
+            char initstr[] = "!UBX CFG-GNSS 0 32 32 1 0 10 32 0 1\n"
+                             "!UBX CFG-GNSS 0 32 32 1 6 8 16 0 1\n"
+                             "!UBX CFG-MSG 3 15 0 1 0 1 0 0\n"
+                             "!UBX CFG-MSG 3 16 0 1 0 1 0 0\n"
+                             "!UBX CFG-MSG 1 32 0 1 0 1 0 0\n";
+            uart_write_bytes(UART_NUM_1, initstr, sizeof(initstr));
+#endif
+            int sock_ok = 1;
+            while(sock_ok == 1)
             {
-
-                int len;
-                uint8_t rx_buffer[RXBUF_SIZE];
-                len = recv(sock, rx_buffer, sizeof(rx_buffer), MSG_DONTWAIT);
+                int len = 0;
+                uint8_t rx_buffer[RXBUF_SIZE+1];
+                len = recv(sock, rx_buffer, RXBUF_SIZE, MSG_DONTWAIT);
 
                 if(len == EWOULDBLOCK)
                 {
@@ -154,32 +147,30 @@ static void tcp_server_task(void* pvParameters)
                 }
                 else if(len == 0)
                 {
-                    ESP_LOGW(TAG, "Connection closed");
-                    break;
+                    sock_ok = -1;
+                    continue;
                 }
 
                 // Read data from the UART
                 len = uart_read_bytes(UART_NUM_1, rx_buffer, RXBUF_SIZE, 1 / portTICK_RATE_MS);
-                printf("RX:%d\n",len);
-                // Write data back to the UART
                 if(len > 0)
                 {
                     rx_buffer[len] = 0;
-                    ESP_LOGW(TAG, "RX[%d]:%s", len, rx_buffer);
                     int err = send(sock, rx_buffer, len, 0);
                     if(err < 0)
                     {
-                        ESP_LOGE(TAG, "Error occured during sending: errno %d", errno);
-                        break;
+                        sock_ok = -2;
+                        continue;
                     }
                 }
             }
 
             if(sock != -1)
             {
-                ESP_LOGE(TAG, "Shutting down socket and restarting...");
+                ESP_LOGE(TAG, "Shutting down socket (%d) and restarting...",sock_ok);
                 shutdown(sock, 0);
                 close(sock);
+                sock = -1;
             }
         }
     }
@@ -188,7 +179,7 @@ static void tcp_server_task(void* pvParameters)
 
 void gps_init()
 {
-    xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
+    xTaskCreate(gps_server_task, "gps_server", 3072, NULL, 5, NULL);
 }
 
 void gps_exit()

@@ -123,7 +123,7 @@
 
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA 13
-#define I2C_BUS_SCL 12
+#define I2C_BUS_SCL 15
 #define I2C_BUS_INT 4
 
 #define ROS2_NODENAME "s2mower"
