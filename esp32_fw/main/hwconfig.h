@@ -104,6 +104,15 @@
  */
 #ifdef CONFIG_ROS2NODE_HW_S2
 
+#define SDSPI_PIN_NUM_MISO (gpio_num_t)13
+#define SDSPI_PIN_NUM_MOSI (gpio_num_t)11
+#define SDSPI_PIN_NUM_CLK (gpio_num_t)12
+#define SDSPI_PIN_NUM_CS (gpio_num_t)10
+#define USE_SPI_MODE
+
+#define GPS_UART1_TXD 18
+#define GPS_UART1_RXD 17
+
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA 13
 #define I2C_BUS_SCL 12
@@ -151,7 +160,12 @@
 #define OLED_I2C_ADDR  0x78
 #endif
 
+#define DEFAULT_PRIO ((UBaseType_t)5)
+
 void powersw(bool onoff);
+void pm_ref();
+void pm_unref();
+int pm_cnt();
 
 #endif
 

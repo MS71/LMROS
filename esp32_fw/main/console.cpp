@@ -285,9 +285,7 @@ static void con_handle()
 #ifdef CONFIG_PM_ENABLE
                 con_printf("* pmlock                  # lock the power managment\n");
                 con_printf("* pmrel                   # release the power managment\n");
-#ifdef CONFIG_PM_PROFILING
-                con_printf("* pmdump                  # print pm lock infos\n");
-#endif                
+                con_printf("* pmd                     # print pm lock infos\n");
 #endif
                 con_printf("* pwron/pwroff            # enable/disable power\n");
             }
@@ -316,13 +314,6 @@ static void con_handle()
                 con_printf("pm acquire ...\n");
                 esp_pm_lock_acquire(con_pmlock);
             }
-#ifdef CONFIG_PM_PROFILING
-            else if(strcasecmp("pmlock", rx_buffer) == 0)
-            {
-                con_printf("pm acquire ...\n");
-                esp_pm_dump_locks(stdout);
-            }                        
-#endif            
 #endif
 #ifdef CONFIG_ENABLE_I2C_POWER
             else if(strcasecmp("reboot",rx_buffer)==0 )
@@ -605,6 +596,21 @@ static void con_handle()
             {
                 vTaskGetRunTimeStats(con_log_linebuf);
                 con_printf("%s",con_log_linebuf);
+            }
+#endif
+#ifdef CONFIG_PM_ENABLE
+            else if(strcasecmp("pmd",rx_buffer)==0)
+            {
+                char tmpbuf[512] = {};
+                con_printf("pmcnt=%d\n",pm_cnt());
+                FILE *f = fmemopen(tmpbuf, sizeof(tmpbuf), "w");
+                if( f != NULL )
+                {
+                    esp_pm_dump_locks(f);
+                    con_printf("%s",tmpbuf);
+                    fclose(f);
+                }
+                con_printf("\n");
             }
 #endif
 #ifdef CONFIG_ENABLE_I2C_MOTOR

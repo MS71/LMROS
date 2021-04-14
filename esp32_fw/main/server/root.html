@@ -7,7 +7,24 @@
 
 <body>
 
-<h1>ESP32(-S2) based (micro)ROS(2) Mower</h1>
+<div class="tabbed">
+   <input checked="checked" id="tab1" type="radio" name="tabs" />
+   <input id="tab2" type="radio" name="tabs" />
+   <input id="tab3" type="radio" name="tabs" />
+
+   <nav>
+      <label for="tab1">Berlin</label>
+      <label for="tab2">London</label>
+      <label for="tab3">Paris</label>
+   </nav>
+   
+   <figure>
+      <div class="tab1"> 1 </div>
+      <div class="tab2"> 2 </div>
+      <div class="tab3"> 3 </div>
+   </figure>
+</div>
+
 
  <table>
   <tr>
@@ -61,5 +78,33 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@2.8.0"></script>
 <script type="text/javascript" src="test.js"></script>
+
+<script src="http://ccchart.com/js/ccchart.js" charset="utf-8"></script>
+<canvas id="hoge"></canvas>
+<script>
+var chartdata1 = {
+  "config": {
+    "title": "WebSocket test",
+    "subTitle": "realtime chart",
+    "type": "bezi2",
+    "lineWidth": 2,
+    "minY": 0,
+    "xScaleSkip": 3,
+    "maxWsColLen": 18,
+    "colorSet":
+          ["#DDA0DD","#3CB000"]
+  },
+  "data": [
+    ["time"],
+    ["data1"],
+    ["data2"]
+  ]
+};
+  ccchart
+      .init('hoge', chartdata1)
+      .ws('ws://ccchart.com:8016')
+</script>
+
+
 </body>
 </html>

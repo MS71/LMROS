@@ -18,9 +18,6 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
-#ifdef CONFIG_PM_ENABLE
-#include "esp_pm.h"
-#endif
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -1602,12 +1599,7 @@ void i2c_scan()
 static void i2c_task(void* param)
 {
     ESP_LOGW(TAG, "i2c_task() ...");
-#ifdef CONFIG_PM_ENABLE
-    esp_pm_lock_handle_t pmlock;
-    esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "i2clock", &pmlock);
-    esp_pm_lock_acquire(pmlock);
-#endif
-
+    pm_ref();
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
 #ifdef CONFIG_ENABLE_I2C_POWER
     i2cnode_set_u16(STM32_I2C_ADDR, 0x4C /*I2C_REG_TB_U16_VL53L1X_RSTREG*/, 0x0000);
@@ -1747,9 +1739,7 @@ static void i2c_task(void* param)
     catch(int err)
     {
         ESP_LOGE(TAG, "i2c_task() I2C exception err=0x%08x", err);
-#ifdef CONFIG_PM_ENABLE
-        esp_pm_lock_release(pmlock);
-#endif
+        pm_unref();
         while(1)
         {
             ESP_LOGE(TAG, "i2c_task() Can't init ROS2Zumo, waiting for restart ...");
@@ -1779,9 +1769,7 @@ static void i2c_task(void* param)
     i2cnode_set_u8(STM32_I2C_ADDR, 0x48 /*I2C_REG_TB_U8_LDS_SPEED*/, 1);
 #endif
 
-#ifdef CONFIG_PM_ENABLE
-    esp_pm_lock_release(pmlock);
-#endif
+    pm_unref();
 
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
 #ifdef CONFIG_ENABLE_I2C_OLED_SH1106
@@ -1809,11 +1797,7 @@ static void i2c_task(void* param)
         keepon = true;
 #endif
 
-#ifdef CONFIG_PM_ENABLE
-        // i2c_setpin_boot(1);
-        esp_pm_lock_acquire(pmlock);
-        // i2c_setpin_boot(0);
-#endif
+        pm_ref();
 
 #ifdef CONFIG_ENABLE_I2C_LDS
         {
@@ -1995,12 +1979,7 @@ static void i2c_task(void* param)
             ESP_LOGE(TAG, "I2C exception err=0x%02x", err);
         }
 
-#ifdef CONFIG_PM_ENABLE
-        /*
-         * SLEEP ...
-         */
-        esp_pm_lock_release(pmlock);
-#endif
+        pm_unref();
 
         while(shutdown == true)
         {
@@ -2096,7 +2075,7 @@ void i2c_handler_init()
     // i2c_set_start_timing((i2c_port_t)I2C_BUS_PORT,I2C_APB_CLK_FREQ/1000,I2C_APB_CLK_FREQ/1000);
     // i2c_set_stop_timing((i2c_port_t)I2C_BUS_PORT,I2C_APB_CLK_FREQ/1000,I2C_APB_CLK_FREQ/1000);
 
-    xTaskCreate(&i2c_task, "i2c_task", 8192, NULL, 5, NULL);
+    xTaskCreate(&i2c_task, "i2c_task", 8192, NULL, DEFAULT_PRIO, NULL);
     ESP_LOGI(TAG, "main() i2c init ... done");
 }
 

@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
+#include "hwconfig.h"
 #include "lwip/api.h"
 
 #include "esp_wifi.h"
@@ -21,6 +22,8 @@
 
 #include "websocket_server.h"
 
+static const char* TAG = "WEBUI";
+
 extern float g_ubat;
 extern float g_usolar;
 extern float g_ucharge;
@@ -32,7 +35,6 @@ const static int client_queue_size = 10;
 
 // handles websocket events
 void websocket_callback(uint8_t num,WEBSOCKET_TYPE_t type,char* msg,uint64_t len) {
-  const static char* TAG = "websocket_callback";
   int value;
 
   switch(type) {
@@ -76,7 +78,6 @@ void websocket_callback(uint8_t num,WEBSOCKET_TYPE_t type,char* msg,uint64_t len
 
 // serves any clients
 static void http_serve(struct netconn *conn) {
-  const static char* TAG = "http_server";
   const static char HTML_HEADER[] = "HTTP/1.1 200 OK\nContent-type: text/html\n\n";
   const static char ERROR_HEADER[] = "HTTP/1.1 404 Not Found\nContent-type: text/html\n\n";
   const static char JS_HEADER[] = "HTTP/1.1 200 OK\nContent-type: text/javascript\n\n";
@@ -230,9 +231,9 @@ static void http_serve(struct netconn *conn) {
 
 // handles clients when they first connect. passes to a queue
 static void server_task(void* pvParameters) {
-  const static char* TAG = "server_task";
   struct netconn *conn, *newconn;
   static err_t err;
+  ESP_LOGI(TAG,"server_task");
   client_queue = xQueueCreate(client_queue_size,sizeof(struct netconn*));
 
   conn = netconn_new(NETCONN_TCP);
@@ -311,14 +312,17 @@ static void count_task(void* pvParameters) {
 
 void webui_init()
 {
+    ESP_LOGI(TAG,"webui_init ...");
     ws_server_start();
-    xTaskCreate(&server_task,"server_task",3000,NULL,9,NULL);
-    xTaskCreate(&server_handle_task,"server_handle_task",4000,NULL,6,NULL);
-    xTaskCreate(&count_task,"count_task",6000,NULL,2,NULL);
+    xTaskCreate(&server_task,"server_task",3000,NULL,DEFAULT_PRIO,NULL);
+    xTaskCreate(&server_handle_task,"server_handle_task",4000,NULL,DEFAULT_PRIO,NULL);
+    xTaskCreate(&count_task,"count_task",6000,NULL,DEFAULT_PRIO,NULL);
+    ESP_LOGI(TAG,"webui_init ... done");
 }
 
 void webui_exit()
 {
+    ESP_LOGI(TAG,"webui_exit");
 
 }
 

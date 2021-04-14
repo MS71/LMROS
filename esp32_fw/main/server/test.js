@@ -41,6 +41,7 @@ var myChart = new Chart(ctx, {
     }
 });
 
+
 slider.oninput = function () {
   websocket.send("L" + slider.value);
 }
@@ -69,6 +70,7 @@ websocket.onmessage = function(evt) {
       break;
     case 'H':
       document.getElementById("freeheap").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
+      document.getElementById("hoge").wscase.oneColAtATime();
       break;
     case 'T':
       document.getElementById("sysuptime").innerHTML = parseInt(msg.replace(/[^0-9\.]/g, ''), 10);
@@ -103,3 +105,4 @@ websocket.onerror = function(evt) {
   console.log('Websocket error: ' + evt);
   document.getElementById("test").innerHTML = "WebSocket error????!!!1!!";
 }
+

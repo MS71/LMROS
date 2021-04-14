@@ -27,9 +27,9 @@
 #include "freertos/task.h"
 #include "ota_server.h"
 
+#include <esp_task_wdt.h>
 #include <driver/adc.h>
 #include <esp_adc_cal.h>
-#include <driver/adc.h>
 #ifdef CONFIG_IDF_TARGET_ESP32S2
 #include <driver/adc_common.h>
 #endif
@@ -51,6 +51,8 @@
 #ifdef CONFIG_ENABLE_SPIFS
 #include "esp_spiffs.h"
 #endif
+#include "driver/rtc_io.h"
+#include "esp32/rom/uart.h"
 #include "esp_system.h"
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
@@ -58,16 +60,14 @@
 #include "esp_wifi.h"
 #include "i2chandler.h"
 #include "nvs_flash.h"
-#include "esp32/rom/uart.h"
 #include "sdmmc_cmd.h"
-#include "driver/rtc_io.h"
 #if CONFIG_IDF_TARGET_ESP32S2
 #include "driver/temp_sensor.h"
 #endif
 #include "lwip/err.h"
+#include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
-#include "lwip/netdb.h"
 
 #include "ssd1306.h"
 #include "ssd1306_default_if.h"
@@ -90,18 +90,18 @@
 #include "ulp_main.h"
 
 extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
-extern const uint8_t ulp_main_bin_end[]   asm("_binary_ulp_main_bin_end");
+extern const uint8_t ulp_main_bin_end[] asm("_binary_ulp_main_bin_end");
 #endif
 
 void beep(int onoff);
 
-//static esp_err_t event_handler(void* ctx, system_event_t* event);
+// static esp_err_t event_handler(void* ctx, system_event_t* event);
 void check_wifi_config();
 void initialise_wifi(void);
 
-//static char my_wifi_ssid[64] = {};
-//static char my_wifi_psk[64] = {};
-//static bool my_wifi_save_on_connected = false;
+// static char my_wifi_ssid[64] = {};
+// static char my_wifi_psk[64] = {};
+// static bool my_wifi_save_on_connected = false;
 
 #ifdef CONFIG_ENABLE_SDCARD
 sdmmc_card_t* card = NULL;
@@ -117,111 +117,216 @@ static const char* TAG = "MAIN";
 extern EventGroupHandle_t wifi_event_group;
 const int CONNECTED_BIT = BIT0;
 
-//esp_ip4_addr_t s_ip_addr = {};
-//uint8_t s_ip_addr_changed = 1;
+static esp_pm_lock_handle_t pmlock_cpu;
+static esp_pm_lock_handle_t pmlock_ahb;
+static esp_pm_lock_handle_t pmlock_wifi;
+static int pmlock_cnt = 0;
+
+void pm_init()
+{
+#if CONFIG_PM_ENABLE
+    ESP_LOGI(TAG, "starting pm ...");
+    // Configure dynamic frequency scaling:
+    // maximum and minimum frequencies are set in sdkconfig,
+    // automatic light sleep is enabled if tickless idle support is enabled.
+#ifdef CONFIG_IDF_TARGET_ESP32S2
+    esp_pm_config_esp32s2_t pm_config = {};
+#else
+    esp_pm_config_esp32_t pm_config = {};
+#endif
+    pm_config.max_freq_mhz = 240;
+#ifdef CONFIG_IDF_TARGET_ESP32S2
+    pm_config.min_freq_mhz = 10;
+#else
+    pm_config.min_freq_mhz = 40;
+#endif
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+    pm_config.light_sleep_enable = true;
+#endif
+    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
+#endif // CONFIG_PM_ENAB    
+    esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "pm_lock_wifi", &pmlock_cpu);    
+    esp_pm_lock_create(ESP_PM_APB_FREQ_MAX, 0, "pm_lock_ahb", &pmlock_ahb);    
+    esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "pm_lock_wifi", &pmlock_wifi);    
+    pmlock_cnt = 0;
+}
+
+int pm_cnt()
+{
+    return pmlock_cnt;
+}
+
+void pm_ref()
+{
+    pmlock_cnt++;
+    ESP_LOGV(TAG, "pmlock_cnt=%d",pmlock_cnt);
+#if CONFIG_PM_ENABLE
+    if( pmlock_cnt > 0 )
+    {
+        ESP_LOGV(TAG, "pmlock_cnt=%d aquire",pmlock_cnt);
+        esp_pm_lock_acquire(pmlock_cpu);  
+        esp_pm_lock_acquire(pmlock_ahb);  
+        esp_pm_lock_acquire(pmlock_wifi);  
+    }
+#endif
+}
+
+void pm_unref()
+{
+    pmlock_cnt--;
+    if( pmlock_cnt < 0 )
+    {
+        ESP_LOGE(TAG, "pmlock_cnt=%d",pmlock_cnt);
+    }
+    else
+    {
+        ESP_LOGV(TAG, "pmlock_cnt=%d",pmlock_cnt);
+    }
+#if CONFIG_PM_ENABLE
+    if( pmlock_cnt <= 0 )
+    {
+        ESP_LOGV(TAG, "pmlock_cnt=%d release",pmlock_cnt);
+        esp_pm_lock_release(pmlock_cpu);  
+        esp_pm_lock_release(pmlock_ahb);  
+        esp_pm_lock_release(pmlock_wifi);  
+    }
+#endif
+}
+
+// esp_ip4_addr_t s_ip_addr = {};
+// uint8_t s_ip_addr_changed = 1;
 
 #if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
 /**
- * @brief 
+ * @brief
  * @param param
  */
 static void ota_server_task(void* param)
 {
     ESP_LOGI(TAG, "ota task ...");
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
-    
+
     ota_server_start();
     vTaskDelete(NULL);
 }
 #endif
 
 #ifdef CONFIG_ENABLE_SDCARD
-// This example can use SDMMC and SPI peripherals to communicate with SD card.
-// By default, SDMMC peripheral is used.
-// To enable SPI mode, uncomment the following line:
 
-#undef USE_SPI_MODE
-
-// When testing SD and SPI modes, keep in mind that once the card has been
-// initialized in SPI mode, it can not be reinitialized in SD mode without
-// toggling power to the card.
-
-#ifdef USE_SPI_MODE
-// Pin mapping when using SPI mode.
-// With this mapping, SD card can be used both in SPI and 1-line SD mode.
-// Note that a pull-up on CS line is required in SD mode.
+// ESP32-S2 and ESP32-C3 doesn't have an SD Host peripheral, always use SPI:
+#if CONFIG_IDF_TARGET_ESP32S2 ||CONFIG_IDF_TARGET_ESP32C3
+#ifndef USE_SPI_MODE
+#define USE_SPI_MODE
 #endif // USE_SPI_MODE
+// on ESP32-S2, DMA channel must be the same as host id
+#define SPI_DMA_CHAN    host.slot
+#endif //CONFIG_IDF_TARGET_ESP32S2
 
+// DMA channel to be used by the SPI peripheral
+#ifndef SPI_DMA_CHAN
+#define SPI_DMA_CHAN    1
+#endif //SPI_DMA_CHAN
 
 /**
- * @brief 
+ * @brief
  * @param param
  */
 static void sd_test_task(void* param)
 {
-    if(sdcard_ready == true && card != NULL) 
-	{
-		ESP_LOGW(TAG, "sd_test_task()");
+    ESP_LOGW(TAG, "sd_test_task() %d ",sdcard_ready);
+    if(sdcard_ready == true )
+    {
+        uint8_t fn_idx = 0;
+        char fn[64];
+        // Card has been initialized, print its properties
+        sdmmc_card_print_info(stdout, card);
 
-		uint8_t fn_idx = 0;
-		char fn[64];
-		// Card has been initialized, print its properties
-		sdmmc_card_print_info(stdout, card);
+        while(1)
+        {
+            size_t sd_test_buf_size = 32 * 1024;
+            uint8_t* sd_test_buf = (uint8_t*)malloc(sd_test_buf_size);
+            if(sd_test_buf != NULL)
+            {
+                memset(sd_test_buf, 0, sd_test_buf_size);
+                // Use POSIX and C standard library functions to work with files.
+                // First create a file.
+                sprintf(fn, "/sdcard/hello-%d.bin", fn_idx++);
+                FILE* f = fopen(fn, "w");
+                if(f == NULL)
+                {
+                    ESP_LOGE(TAG, "Failed to open file for writing");
+                }
+                else
+                {
+                    int n,r;
+                    uint32_t i = 0;
+                    int64_t t = esp_timer_get_time();
+                    for(n=0;n<(8*4*8);n++)
+                    {
+                        pm_ref();
+                        r = fwrite(sd_test_buf, 1, sd_test_buf_size, f);
+                        pm_unref();
+                        if( r != sd_test_buf_size )
+                        {
+                            ESP_LOGE(TAG, "fwrite error %d",r);
+                            break;
+                        }
+                        i += r;
+                        esp_task_wdt_reset();
+                    }
+                    fflush(f);
+                    if((esp_timer_get_time() - t) != 0)
+                    {
+                        ESP_LOGI(TAG, "File (%s) written %dMByte %dkB/s", fn, 
+                            (int)((i) / (1024 * 1024)),
+                            (int)((1000 * i) / (esp_timer_get_time() - t)));
+                    }
+                    fclose(f);
+                }
 
+                {
+                    f = fopen(fn, "r");
+                    if(f == NULL)
+                    {
+                        ESP_LOGE(TAG, "Failed to open file for reading");
+                    }
+                    else
+                    {
+                        int64_t t = esp_timer_get_time();
+                        size_t i = 0;
+                        while(!feof(f))
+                        {
+                            pm_ref();
+                            int r = fread(sd_test_buf, 1, sd_test_buf_size, f);
+                            pm_unref();
+                            if( r < 0 )
+                            {
+                                ESP_LOGE(TAG, "fread error %d",r);
+                                break;
+                            }
+                            i += r; 
+                            esp_task_wdt_reset();
+                        }
+                        if((esp_timer_get_time() - t) != 0)
+                        {
+                            ESP_LOGI(TAG, "File (%s) read %dMByte %dkB/s", fn, 
+                                (int)((i) / (1024 * 1024)),
+                                (int)((1000 * i) / (esp_timer_get_time() - t)));
+                        }
+                        fclose(f);
+                    }
+                }
+                free(sd_test_buf);
+            }
 
-		while(1) {
-			size_t sd_test_buf_size = 2 * 1024 * 1024;
-			uint8_t* sd_test_buf = (uint8_t*)malloc(sd_test_buf_size);
-			if(sd_test_buf != NULL) {
-				memset(sd_test_buf,0,sd_test_buf_size);
-				// Use POSIX and C standard library functions to work with files.
-				// First create a file.
-				sprintf(fn,"/sdcard/hello-%d.bin",fn_idx++);
-				FILE* f = fopen(fn, "w");
-				if(f == NULL) {
-					ESP_LOGE(TAG, "Failed to open file for writing");
-				} else {
-					uint32_t i = 0;
-					int64_t t = esp_timer_get_time();
-					i += fwrite(sd_test_buf, 1, sd_test_buf_size, f);
-					if((esp_timer_get_time() - t) != 0) {
-					ESP_LOGI(TAG, "File (%s) written %dMByte %dkB/s", 
-						fn,
-						(int)(sd_test_buf_size / (1024 * 1024)),
-						(int)((1000 * i) / (esp_timer_get_time() - t)));
-					}
-					fclose(f);
-				}
-
-				{
-					f = fopen(fn, "r");
-					if(f == NULL) {
-					ESP_LOGE(TAG, "Failed to open file for reading");
-					} else {
-					int64_t t = esp_timer_get_time();
-					size_t i = 0;
-					while(!feof(f)) {
-						i += fread(sd_test_buf, 1, sd_test_buf_size, f);
-					}
-					if((esp_timer_get_time() - t) != 0) {
-						ESP_LOGI(TAG, "File (%s) read %dkB/s", 
-							fn,
-							(int)((1000 * i) / (esp_timer_get_time() - t)));
-					}
-					fclose(f);
-					}
-				}
-				free(sd_test_buf);
-			}
-
-			vTaskDelay(5000 / portTICK_PERIOD_MS);
-		}
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
     }
     vTaskDelete(NULL);
 }
 
 /**
- * @brief 
+ * @brief
  */
 void sdmmc_init()
 {
@@ -243,50 +348,85 @@ void sdmmc_init()
     // Internal pull-ups are not sufficient. However, enabling internal pull-ups
     // does make a difference some boards, so we do that here.
     gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_MOSI, GPIO_PULLUP_ONLY); // CMD, needed in 4- and 1- line modes
-    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_MISO, GPIO_PULLUP_ONLY);  // D0, needed in 4- and 1-line modes
+    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_MISO, GPIO_PULLUP_ONLY); // D0, needed in 4- and 1-line modes
     // gpio_set_pull_mode(4, GPIO_PULLUP_ONLY);    // D1, needed in 4-line mode only
     // gpio_set_pull_mode(12, GPIO_PULLUP_ONLY);   // D2, needed in 4-line mode only
-    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_CS, GPIO_PULLUP_ONLY); // D3, needed in 4- and 1-line modes
+    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_CS, GPIO_PULLUP_ONLY);  // D3, needed in 4- and 1-line modes
     gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_CLK, GPIO_PULLUP_ONLY); // CLK, needed in 4- and 1-line modes
 
 #else
     ESP_LOGI(TAG, "Using SPI peripheral");
 
+    // GPIOs 15, 2, 4, 12, 13 should have external 10k pull-ups.
+    // Internal pull-ups are not sufficient. However, enabling internal pull-ups
+    // does make a difference some boards, so we do that here.
+    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_MOSI, GPIO_PULLUP_ONLY); // CMD, needed in 4- and 1- line modes
+    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_MISO, GPIO_PULLUP_ONLY); // D0, needed in 4- and 1-line modes
+    // gpio_set_pull_mode(4, GPIO_PULLUP_ONLY);    // D1, needed in 4-line mode only
+    // gpio_set_pull_mode(12, GPIO_PULLUP_ONLY);   // D2, needed in 4-line mode only
+    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_CS, GPIO_PULLUP_ONLY);  // D3, needed in 4- and 1-line modes
+    gpio_set_pull_mode((gpio_num_t)SDSPI_PIN_NUM_CLK, GPIO_PULLUP_ONLY); // CLK, needed in 4- and 1-line modes
+
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    sdspi_slot_config_t slot_config = SDSPI_SLOT_CONFIG_DEFAULT();
-    slot_config.gpio_miso = SDSPI_PIN_NUM_MISO;
-    slot_config.gpio_mosi = SDSPI_PIN_NUM_MOSI;
-    slot_config.gpio_sck = SDSPI_PIN_NUM_CLK;
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = SDSPI_PIN_NUM_MOSI,
+        .miso_io_num = SDSPI_PIN_NUM_MISO,
+        .sclk_io_num = SDSPI_PIN_NUM_CLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 4000,
+    };
+
+    ESP_LOGI(TAG, "SDSPI using dma %d",SPI_DMA_CHAN);
+    ret = spi_bus_initialize((spi_host_device_t)host.slot, &bus_cfg, SPI_DMA_CHAN);
+    if(ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to initialize bus.");
+        return;
+    }
+    
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.gpio_cs = SDSPI_PIN_NUM_CS;
-    // This initializes the slot without card detect (CD) and write protect (WP) signals.
-    // Modify slot_config.gpio_cd and slot_config.gpio_wp if your board has these signals.
+    slot_config.host_id = (spi_host_device_t)host.slot;
 #endif // USE_SPI_MODE
 
     // Options for mounting the filesystem.
     // If format_if_mount_failed is set to true, SD card will be partitioned and
     // formatted in case when mounting fails.
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
-	.format_if_mount_failed = true, .max_files = 16, .allocation_unit_size = 16 * 1024
+        .format_if_mount_failed = true, .max_files = 16, .allocation_unit_size = 16 * 1024
     };
 
     // Use settings defined above to initialize SD card and mount FAT filesystem.
     // Note: esp_vfs_fat_sdmmc_mount is an all-in-one convenience function.
     // Please check its source code and implement error recovery when developing
     // production applications.
+#ifndef USE_SPI_MODE
     ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config, &card);
-
-    if(ret != ESP_OK) {
-	if(ret == ESP_FAIL) {
-	    ESP_LOGE(TAG,
-	        "Failed to mount filesystem. "
-	        "If you want the card to be formatted, set format_if_mount_failed = true.");
-	} else {
-	    ESP_LOGE(TAG,
-	        "Failed to initialize the card (%s). "
-	        "Make sure SD card lines have pull-up resistors in place.",
-	        esp_err_to_name(ret));
-	}
-	sdcard_ready = false;
+#else
+    ret = esp_vfs_fat_sdspi_mount("/sdcard", &host, &slot_config, &mount_config, &card);
+#endif
+    if(ret != ESP_OK)
+    {
+        if(ret == ESP_FAIL)
+        {
+            ESP_LOGE(TAG,
+                "Failed to mount filesystem. "
+                "If you want the card to be formatted, set format_if_mount_failed = true.");
+        }
+        else
+        {
+            ESP_LOGE(TAG,
+                "Failed to initialize the card (%s). "
+                "Make sure SD card lines have pull-up resistors in place.",
+                esp_err_to_name(ret));
+        }
+        sdcard_ready = false;
+    }
+    else
+    {
+        ESP_LOGI(TAG, "sdcard mounted");
+        sdcard_ready = true;
     }
 }
 #endif
@@ -300,81 +440,82 @@ spi_device_interface_config_t devcfg = {};
 void spihost_init()
 {
     esp_err_t ret;
-	
+
     gpio_set_direction(SPIHOST_PIN_NUM_CS, GPIO_MODE_OUTPUT);
 
+    buscfg.miso_io_num = SPIHOST_PIN_NUM_MISO;
+    buscfg.mosi_io_num = SPIHOST_PIN_NUM_MOSI;
+    buscfg.sclk_io_num = SPIHOST_PIN_NUM_CLK;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = 1024 * 8;
 
-	buscfg.miso_io_num=SPIHOST_PIN_NUM_MISO;
-    buscfg.mosi_io_num=SPIHOST_PIN_NUM_MOSI;
-	buscfg.sclk_io_num=SPIHOST_PIN_NUM_CLK;
-	buscfg.quadwp_io_num=-1;
-	buscfg.quadhd_io_num=-1;
-	buscfg.max_transfer_sz=1024*8;
-	
-	devcfg.clock_speed_hz=4*1000*1000;           //Clock out at 26 MHz
-	devcfg.mode=0;                         		  //SPI mode 0
-    devcfg.spics_io_num=SPIHOST_PIN_NUM_CS;       //CS pin
-    devcfg.queue_size=1;                          //We want to be able to queue 7 transactions at a time
+    devcfg.clock_speed_hz = 4 * 1000 * 1000;  // Clock out at 26 MHz
+    devcfg.mode = 0;                          // SPI mode 0
+    devcfg.spics_io_num = SPIHOST_PIN_NUM_CS; // CS pin
+    devcfg.queue_size = 1;                    // We want to be able to queue 7 transactions at a time
     //.pre_cb=lcd_spi_pre_transfer_callback,      //Specify pre-transfer callback to handle D/C line
-	devcfg.command_bits = 8;
-	devcfg.address_bits = 8;
-	//devcfg.dummy_bits = 32;
-	devcfg.cs_ena_pretrans = 1;
-	devcfg.cs_ena_posttrans = 16;
-    //devcfg.flags = SPI_DEVICE_HALFDUPLEX;
-		
-    //Initialize the SPI bus
-    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 1 /*dma*/ );
+    devcfg.command_bits = 8;
+    devcfg.address_bits = 8;
+    // devcfg.dummy_bits = 32;
+    devcfg.cs_ena_pretrans = 1;
+    devcfg.cs_ena_posttrans = 16;
+    // devcfg.flags = SPI_DEVICE_HALFDUPLEX;
+
+    // Initialize the SPI bus
+    ret = spi_bus_initialize(VSPI_HOST, &buscfg, 1 /*dma*/);
     ESP_ERROR_CHECK(ret);
-    //Attach the LCD to the SPI bus
-    ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi);
+    // Attach the LCD to the SPI bus
+    ret = spi_bus_add_device(VSPI_HOST, &devcfg, &spi);
     ESP_ERROR_CHECK(ret);
 }
 
 /**
- * @brief 
+ * @brief
  * @param param
  */
 static void spihost_test_task(void* param)
 {
-	ESP_LOGW(TAG, "spihost_test_task()");
-	while(1) 
-	{
-		size_t test_buf_size = 1024;
-		uint8_t* test_buf = (uint8_t*)malloc(test_buf_size);
-		if(test_buf != NULL) 
-		{		
-			//ESP_LOGW(TAG, "spihost_test_task() loop ...");
-			for( int i=0;i<test_buf_size;i++)
-			{
-				test_buf[i] = i&0xff;
-			}
-			
-		    esp_err_t ret;
-			spi_transaction_t t = {};
-			t.cmd = 0xAA;
-			t.addr = 0x55;
-			t.length=test_buf_size*8;       //Len is in bytes, transaction length is in bits.
-			t.rxlength=test_buf_size*8;     //Len is in bytes, transaction length is in bits.
-			t.tx_buffer=test_buf;           //Data
-			t.rx_buffer=test_buf;           //Data
-			//t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
-			ret=spi_device_polling_transmit(spi, &t);  //Transmit!
-			assert(ret==ESP_OK);            //Should have had no issues.
+    ESP_LOGW(TAG, "spihost_test_task()");
+    while(1)
+    {
+        pm_ref();
+        size_t test_buf_size = 1024;
+        uint8_t* test_buf = (uint8_t*)malloc(test_buf_size);
+        if(test_buf != NULL)
+        {
+            // ESP_LOGW(TAG, "spihost_test_task() loop ...");
+            for(int i = 0; i < test_buf_size; i++)
+            {
+                test_buf[i] = i & 0xff;
+            }
 
-			for( int i=0;i<test_buf_size;i++)
-			{
-				if( test_buf[i] != (i&0xff) )
-				{
-					ESP_LOGW(TAG, "spihost_test_task() payload error test_buf[%04x] != %02x",i,i&0xff);
-					break;
-				}
-			}
+            esp_err_t ret;
+            spi_transaction_t t = {};
+            t.cmd = 0xAA;
+            t.addr = 0x55;
+            t.length = test_buf_size * 8;   // Len is in bytes, transaction length is in bits.
+            t.rxlength = test_buf_size * 8; // Len is in bytes, transaction length is in bits.
+            t.tx_buffer = test_buf;         // Data
+            t.rx_buffer = test_buf;         // Data
+            // t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+            ret = spi_device_polling_transmit(spi, &t); // Transmit!
+            assert(ret == ESP_OK);                      // Should have had no issues.
 
-			free(test_buf);
-		}		
+            for(int i = 0; i < test_buf_size; i++)
+            {
+                if(test_buf[i] != (i & 0xff))
+                {
+                    ESP_LOGW(TAG, "spihost_test_task() payload error test_buf[%04x] != %02x", i, i & 0xff);
+                    break;
+                }
+            }
+
+            free(test_buf);
+        }
+        pm_unref();
         vTaskDelay(10 / portTICK_PERIOD_MS);
-	}
+    }
     vTaskDelete(NULL);
 }
 #endif
@@ -391,7 +532,7 @@ void beep(int onoff)
     gpio_reset_pin(gpio);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
-    gpio_set_level(gpio, (onoff==0)?0:1);
+    gpio_set_level(gpio, (onoff == 0) ? 0 : 1);
 #endif
 #endif
 }
@@ -399,13 +540,13 @@ void beep(int onoff)
 void powersw(bool onoff)
 {
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
-    ESP_LOGE(TAG, "powersw %d",onoff);
+    ESP_LOGE(TAG, "powersw %d", onoff);
     gpio_num_t gpio;
     gpio = (gpio_num_t)GPIO_PWR_ON;
     gpio_hold_dis(gpio);
     gpio_set_pull_mode(gpio, GPIO_PULLUP_PULLDOWN);
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
-	gpio_set_level(gpio, (onoff==true)?1:0);
+    gpio_set_level(gpio, (onoff == true) ? 1 : 0);
     gpio_hold_en(gpio);
 
 #if 0
@@ -415,9 +556,9 @@ void powersw(bool onoff)
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
 	gpio_set_level(gpio, (onoff==true)?1:0);
     gpio_hold_en(gpio);
-#endif    
-    
-#endif    
+#endif
+
+#endif
 }
 
 uint8_t g_adccnt = 0;
@@ -431,22 +572,31 @@ float g_temperature = -999.0;
 static void check_efuse(void)
 {
 #if CONFIG_IDF_TARGET_ESP32
-    //Check if TP is burned into eFuse
-    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK) {
+    // Check if TP is burned into eFuse
+    if(esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK)
+    {
         printf("eFuse Two Point: Supported\n");
-    } else {
+    }
+    else
+    {
         printf("eFuse Two Point: NOT supported\n");
     }
-    //Check Vref is burned into eFuse
-    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_VREF) == ESP_OK) {
+    // Check Vref is burned into eFuse
+    if(esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_VREF) == ESP_OK)
+    {
         printf("eFuse Vref: Supported\n");
-    } else {
+    }
+    else
+    {
         printf("eFuse Vref: NOT supported\n");
     }
 #elif CONFIG_IDF_TARGET_ESP32S2
-    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK) {
+    if(esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK)
+    {
         printf("eFuse Two Point: Supported\n");
-    } else {
+    }
+    else
+    {
         printf("Cannot retrieve eFuse Two Point calibration values. Default calibration values will be used.\n");
     }
 #else
@@ -454,32 +604,38 @@ static void check_efuse(void)
 #endif
 }
 
-#define DEFAULT_VREF    1100        //Use adc2_vref_to_gpio() to obtain a better estimate
-#define NO_OF_SAMPLES   1          //Multisampling
+#define DEFAULT_VREF 1100 // Use adc2_vref_to_gpio() to obtain a better estimate
+#define NO_OF_SAMPLES 1   // Multisampling
 
-static esp_adc_cal_characteristics_t *adc_chars;
+static esp_adc_cal_characteristics_t* adc_chars;
 
 static void print_char_val_type(esp_adc_cal_value_t val_type)
 {
-    if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
+    if(val_type == ESP_ADC_CAL_VAL_EFUSE_TP)
+    {
         printf("Characterized using Two Point Value\n");
-    } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
+    }
+    else if(val_type == ESP_ADC_CAL_VAL_EFUSE_VREF)
+    {
         printf("Characterized using eFuse Vref\n");
-    } else {
+    }
+    else
+    {
         printf("Characterized using Default Vref\n");
     }
 }
 
-float adc1_get_voltage(adc1_channel_t channel,float k)
+float adc1_get_voltage(adc1_channel_t channel, float k)
 {
-    //Configure ADC
+    // Configure ADC
     uint32_t adc_reading = 0;
-    //Multisampling
-    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+    // Multisampling
+    for(int i = 0; i < NO_OF_SAMPLES; i++)
+    {
         adc_reading += adc1_get_raw((adc1_channel_t)channel);
     }
     adc_reading /= NO_OF_SAMPLES;
-    //Convert adc_reading to voltage in mV
+    // Convert adc_reading to voltage in mV
     uint32_t voltage = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
     return k * voltage;
 }
@@ -487,76 +643,77 @@ float adc1_get_voltage(adc1_channel_t channel,float k)
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
 static void adc1_timer_callback(void* arg)
 {
-    float k1 = 110.0/10.0;
-    float k2 = (2.505/2.816) * (20.0/10.0);
+    float k1 = 110.0 / 10.0;
+    float k2 = (2.505 / 2.816) * (20.0 / 10.0);
     adc_power_acquire();
-    g_ubat = adc1_get_voltage(ADC1_CHANNEL_0,k1)/1000.0;
-    g_usolar = adc1_get_voltage(ADC1_CHANNEL_1,k1)/1000.0;
-    g_ucharge = adc1_get_voltage(ADC1_CHANNEL_2,k1)/1000.0;
-    g_uhal = adc1_get_voltage(ADC1_CHANNEL_3,k2)/1000.0;
+    g_ubat = adc1_get_voltage(ADC1_CHANNEL_0, k1) / 1000.0;
+    g_usolar = adc1_get_voltage(ADC1_CHANNEL_1, k1) / 1000.0;
+    g_ucharge = adc1_get_voltage(ADC1_CHANNEL_2, k1) / 1000.0;
+    g_uhal = adc1_get_voltage(ADC1_CHANNEL_3, k2) / 1000.0;
     adc_power_release();
-    g_ibat = /*(46.7/2.127) **/ 0.185 * (g_uhal-(5.033/2.0));
-    //g_ibat = g_uhal;
-    if( g_adccnt < 255 ) g_adccnt++;
+    g_ibat = /*(46.7/2.127) **/ 0.185 * (g_uhal - (5.033 / 2.0));
+    // g_ibat = g_uhal;
+    if(g_adccnt < 255)
+        g_adccnt++;
 
     wifi_ap_record_t ap_info = {};
     esp_wifi_sta_get_ap_info(&ap_info);
-    ESP_LOGW(TAG, "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f rssi=%d bssid=%02x:%02x:%02x:%02x:%02x:%02x channel=%d|%d", 
-        g_adccnt, g_ubat,g_usolar,g_ucharge,g_ibat,
-        ap_info.rssi,ap_info.bssid[0],ap_info.bssid[1],ap_info.bssid[2],ap_info.bssid[3],ap_info.bssid[4],ap_info.bssid[5],ap_info.primary,ap_info.second);
-    
+    ESP_LOGW(TAG,
+        "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f rssi=%d bssid=%02x:%02x:%02x:%02x:%02x:%02x "
+        "channel=%d|%d",
+        g_adccnt, g_ubat, g_usolar, g_ucharge, g_ibat, ap_info.rssi, ap_info.bssid[0], ap_info.bssid[1],
+        ap_info.bssid[2], ap_info.bssid[3], ap_info.bssid[4], ap_info.bssid[5], ap_info.primary, ap_info.second);
+
     bool enter_sleep = false;
-    
-    if( g_adccnt == 10 )
+
+    if(g_adccnt == 10)
     {
         powersw(true);
     }
 
-    if( g_adccnt > 15 )
+    if(g_adccnt > 15)
     {
-        if( g_ubat < 13.0 )
+        if(g_ubat < 13.0)
         {
             enter_sleep = true;
         }
-        if( g_usolar > (13.8+0.3) )
+        if(g_usolar > (13.8 + 0.3))
         {
             enter_sleep = false;
         }
-        if( g_ucharge > (13.8+0.3) )
+        if(g_ucharge > (13.8 + 0.3))
         {
             enter_sleep = false;
         }
-        if( g_ubat > 13.8 )
+        if(g_ubat > 13.8)
         {
             enter_sleep = false;
         }
-
     }
-    else if( g_adccnt > 5 )
+    else if(g_adccnt > 5)
     {
-        if( g_ubat < 10.5 )
+        if(g_ubat < 10.5)
         {
             enter_sleep = true;
         }
     }
-    if( enter_sleep == true )
+    if(enter_sleep == true)
     {
         ESP_LOGW(TAG, "Entering deep sleep (30 minutes)");
         esp_sleep_enable_timer_wakeup(60UL * 60UL * 1000000UL); // sleep 1 hour
         powersw(false);
         esp_wifi_stop();
         esp_deep_sleep_start();
-        while(1);
+        while(1)
+            ;
     }
-    
 }
 #endif
 
 #ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
 static void init_ulp_program(void)
 {
-    esp_err_t err = ulp_load_binary(0, ulp_main_bin_start,
-            (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t));
+    esp_err_t err = ulp_load_binary(0, ulp_main_bin_start, (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t));
     ESP_ERROR_CHECK(err);
 
 #if 0
@@ -585,7 +742,7 @@ static void init_ulp_program(void)
      * GPIO12 may be pulled high to select flash voltage.
      */
     rtc_gpio_isolate(GPIO_NUM_1);
-    //rtc_gpio_isolate(GPIO_NUM_15);
+    // rtc_gpio_isolate(GPIO_NUM_15);
 #if CONFIG_IDF_TARGET_ESP32
     esp_deep_sleep_disable_rom_logging(); // suppress boot messages
 #endif
@@ -605,8 +762,9 @@ static void start_ulp_program(void)
 /**
  * @brief main
  */
-extern "C" {
-void app_main(void);
+extern "C"
+{
+    void app_main(void);
 }
 
 void app_main(void)
@@ -614,16 +772,16 @@ void app_main(void)
     EventBits_t ev;
     beep(1);
     powersw(false);
-    //powersw(true);
+    // powersw(true);
 
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
-    //Check if Two Point or Vref are burned into eFuse
+    // Check if Two Point or Vref are burned into eFuse
     check_efuse();
 
-
-    //Characterize ADC
+    // Characterize ADC
     adc_chars = (esp_adc_cal_characteristics_t*)calloc(1, sizeof(esp_adc_cal_characteristics_t));
-    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, DEFAULT_VREF, adc_chars);
+    esp_adc_cal_value_t val_type =
+        esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, DEFAULT_VREF, adc_chars);
     print_char_val_type(val_type);
 
 #ifdef CONFIG_IDF_TARGET_ESP32S2
@@ -633,8 +791,8 @@ void app_main(void)
     temp_sensor_set_config(temp_sensor);
     temp_sensor_start();
 #endif
-    
-    adc1_config_width(ADC_WIDTH_BIT_13); 
+
+    adc1_config_width(ADC_WIDTH_BIT_13);
     adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_6);
     adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_6);
     adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_6);
@@ -642,48 +800,33 @@ void app_main(void)
 #endif
 
 #ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
-    
+
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (cause != ESP_SLEEP_WAKEUP_ULP) {
+    if(cause != ESP_SLEEP_WAKEUP_ULP)
+    {
         printf("Not ULP wakeup\n");
         init_ulp_program();
-    } else {
+    }
+    else
+    {
         printf("Deep sleep wakeup\n");
         printf("ULP did %d measurements since last reset\n", ulp_sample_counter & UINT16_MAX);
         printf("Thresholds:  low=%d  high=%d\n", ulp_low_thr, ulp_high_thr);
         ulp_last_result &= UINT16_MAX;
-        printf("Value=%d was %s threshold\n", ulp_last_result,
-                ulp_last_result < ulp_low_thr ? "below" : "above");
+        printf("Value=%d was %s threshold\n", ulp_last_result, ulp_last_result < ulp_low_thr ? "below" : "above");
     }
     start_ulp_program();
 #endif
 
 #ifdef CONFIG_ESP32S2_ULP_COPROC_ENABLED
-    //printf("Entering deep sleep\n\n");
-    //ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup() );
-    //esp_sleep_enable_ulp_wakeup();
-    //powersw(false);
-    //esp_sleep_enable_timer_wakeup(5000000);
-    //esp_deep_sleep_start();
+    // printf("Entering deep sleep\n\n");
+    // ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup() );
+    // esp_sleep_enable_ulp_wakeup();
+    // powersw(false);
+    // esp_sleep_enable_timer_wakeup(5000000);
+    // esp_deep_sleep_start();
 #endif
 
-#if 0
-    //Continuously sample ADC1
-    while (1) {
-        temp_sensor_read_celsius(&g_temperature);
-        
-        printf("UBat=%3.1f USolar=%3.1f UCharge=%3.1f IBat=%3.1f %4.3f %f\n", 
-            adc1_get_voltage(ADC1_CHANNEL_0,110.0/10.0),
-            adc1_get_voltage(ADC1_CHANNEL_1,110.0/10.0),
-            adc1_get_voltage(ADC1_CHANNEL_2,110.0/10.0),
-            adc1_get_voltage(ADC1_CHANNEL_3,20.0/10.0),
-            0.185*(adc1_get_voltage(ADC1_CHANNEL_3,20.0/10.0)-2500.0)/1000.0,
-            g_temperature);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-
-#endif
-    
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     ESP_LOGI(TAG, "This is ESP32 chip with %d CPU cores, WiFi%s%s, ", chip_info.cores,
@@ -694,16 +837,19 @@ void app_main(void)
     ESP_LOGI(TAG, "%dMB %s flash", spi_flash_get_chip_size() / (1024 * 1024),
         (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
 
-    ESP_LOGI(TAG, "heap: %d bytes free",
-        xPortGetFreeHeapSize());
+    ESP_LOGI(TAG, "heap: %d bytes free", xPortGetFreeHeapSize());
 
     ESP_LOGI(TAG, "init NVS ...");
     esp_err_t err = nvs_flash_init();
-    if(err != ESP_OK) {
+    if(err != ESP_OK)
+    {
         ESP_LOGW(TAG, "nvs_flash_erase/erase");
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
+
+    pm_init();
+    pm_ref();
 
     check_wifi_config();
 
@@ -723,7 +869,7 @@ void app_main(void)
 		vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 #endif
-        
+
     /* start wifi ...
      */
     ESP_LOGI(TAG, "init WIFI ...");
@@ -749,22 +895,31 @@ void app_main(void)
     // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
     esp_err_t ret = esp_vfs_spiffs_register(&conf);
 
-    if(ret != ESP_OK) {
-	if(ret == ESP_FAIL) {
-	    ESP_LOGE(TAG, "Failed to mount or format filesystem");
-	} else if(ret == ESP_ERR_NOT_FOUND) {
-	    ESP_LOGE(TAG, "Failed to find SPIFFS partition");
-	} else {
-	    ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
-	}
+    if(ret != ESP_OK)
+    {
+        if(ret == ESP_FAIL)
+        {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        }
+        else if(ret == ESP_ERR_NOT_FOUND)
+        {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
     }
 
     size_t total = 0, used = 0;
     ret = esp_spiffs_info(NULL, &total, &used);
-    if(ret != ESP_OK) {
-	ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
-    } else {
-	ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    if(ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
     }
 #endif
 
@@ -791,34 +946,31 @@ void app_main(void)
 
 #ifdef CONFIG_ENABLE_SDCARD
     sdmmc_init();
-    xTaskCreate(&sd_test_task, "sd_test_task", 4096, NULL, 5, NULL);
-    //while(1) vTaskDelay(1000 / portTICK_PERIOD_MS);
+    xTaskCreate(&sd_test_task, "sd_test_task", 4096, NULL, DEFAULT_PRIO, NULL);
 #endif
 
 #ifdef CONFIG_ENABLE_SPI
     ESP_LOGI(TAG, "starting spi ...");
     spihost_init();
-    xTaskCreate(&spihost_test_task, "spihost_test_task", 512, NULL, 5, NULL);
+    xTaskCreate(&spihost_test_task, "spihost_test_task", 512, NULL, DEFAULT_PRIO, NULL);
 #endif
 
     /* ... WAIT FOR WIFI ...
      */
-    ESP_LOGI(TAG, "Wait until Wifi Connection ... \n");
+    ESP_LOGI(TAG, "Wait until Wifi Connection ... ");
     ev = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
-    ESP_LOGI(TAG, "... Connected\n");
+    ESP_LOGI(TAG, "... Connected");
 
 #if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
     ESP_LOGI(TAG, "starting ota ...");
-    xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, 5, NULL);
+    xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, DEFAULT_PRIO, NULL);
 #endif
 
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
 #ifndef CONFIG_ESP32S2_ULP_COPROC_ENABLED
-    const esp_timer_create_args_t adc1_timer_args = {
-            .callback = &adc1_timer_callback,
-            /* name is optional, but may help identify the timer when debugging */
-            .name = "adc1_timer"
-    };
+    const esp_timer_create_args_t adc1_timer_args = { .callback = &adc1_timer_callback,
+        /* name is optional, but may help identify the timer when debugging */
+        .name = "adc1_timer" };
     esp_timer_handle_t adc1_timer;
     ESP_ERROR_CHECK(esp_timer_create(&adc1_timer_args, &adc1_timer));
     /* The timer has been created but is not running yet */
@@ -828,7 +980,7 @@ void app_main(void)
 #endif
 
     // my_deflog = esp_log_set_vprintf(my_log);
-    //ESP_LOGW(TAG, "ready");
+    // ESP_LOGW(TAG, "ready");
 
 #ifdef CONFIG_ENABLE_ROS2
     ESP_LOGI(TAG, "starting ros2 ...");
@@ -847,60 +999,14 @@ void app_main(void)
 
     // my_deflog = esp_log_set_vprintf(my_i2clog);
 
-#if CONFIG_PM_ENABLE
-    ESP_LOGI(TAG, "starting pm ...");
-    // Configure dynamic frequency scaling:
-    // maximum and minimum frequencies are set in sdkconfig,
-    // automatic light sleep is enabled if tickless idle support is enabled.
-#ifdef CONFIG_IDF_TARGET_ESP32S2
-    esp_pm_config_esp32s2_t pm_config = {};
-#else
-    esp_pm_config_esp32_t pm_config = {};
-#endif    
-    pm_config.max_freq_mhz = 240;
-#ifdef CONFIG_IDF_TARGET_ESP32S2
-    pm_config.min_freq_mhz = 10;
-#else
-    pm_config.min_freq_mhz = 40;
-#endif    
-#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
-    pm_config.light_sleep_enable = true;
-#endif
-    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
-#endif // CONFIG_PM_ENABLE
-
 #ifdef CONFIG_ENABLE_WEBUI
     ESP_LOGI(TAG, "starting webui ...");
     webui_init();
 #endif
 
     beep(0);
-            
-#if 0
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
-    while(1)
-    {
-        wifi_ap_record_t ap_info = {};
-        esp_wifi_sta_get_ap_info(&ap_info);
-        ESP_LOGW(TAG, "wifi connected rssi=%d ssid=%s bssid=%02x:%02x:%02x:%02x:%02x:%02x channel=%d|%d",ap_info.rssi,ap_info.ssid,ap_info.bssid[0],ap_info.bssid[1],ap_info.bssid[2],ap_info.bssid[3],ap_info.bssid[4],ap_info.bssid[5],ap_info.primary,ap_info.second);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        //adc1_timer_callback(NULL);
-    }
-#endif
 
-#if 0
-    while(1)
-    {
-    ESP_LOGE(TAG, "ADC: ubat=%f usol=%f uch=%f Ibat=%f temp=%f",
-        g_ubat,
-        g_usolar,
-        g_ucharge,
-        g_ibat,
-        g_temperature);
-
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-#endif
+    pm_unref();
 
     ESP_LOGI(TAG, "starting console ...");
     console();
