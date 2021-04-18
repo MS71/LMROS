@@ -33,7 +33,12 @@ static const char* TAG = "GPS";
 
 #define PORT 20000
 
-#define RXBUF_SIZE 256
+#define KEEPALIVE_IDLE              5
+#define KEEPALIVE_INTERVAL          5
+#define KEEPALIVE_COUNT             3
+
+#define RXBUF_SIZE 1024
+uint8_t gps_rx_buffer[RXBUF_SIZE+2];
 
 static void gps_server_task(void* pvParameters)
 {
@@ -97,7 +102,7 @@ static void gps_server_task(void* pvParameters)
             err = listen(listen_sock, 1);
             if(err != 0)
             {
-                ESP_LOGE(TAG, "Error occured during listen: errno %d", errno);
+                ESP_LOGE(TAG, "Error during listen: errno %d", errno);
                 break;
             }
 
@@ -110,7 +115,6 @@ static void gps_server_task(void* pvParameters)
                 break;
             }
 
-
 #if 1
 /*
 !UBX CFG-GNSS 0 32 32 1 0 10 32 0 1
@@ -119,8 +123,8 @@ static void gps_server_task(void* pvParameters)
 !UBX CFG-MSG 3 16 0 1 0 1 0 0
 !UBX CFG-MSG 1 32 0 1 0 1 0 0
  */
-            ESP_LOGW(TAG, "send UBX rtklib init ...");
-            char initstr[] = "!UBX CFG-GNSS 0 32 32 1 0 10 32 0 1\n"
+            ESP_LOGI(TAG, "send UBX rtklib init ...");
+            const char initstr[] = "!UBX CFG-GNSS 0 32 32 1 0 10 32 0 1\n"
                              "!UBX CFG-GNSS 0 32 32 1 6 8 16 0 1\n"
                              "!UBX CFG-MSG 3 15 0 1 0 1 0 0\n"
                              "!UBX CFG-MSG 3 16 0 1 0 1 0 0\n"
@@ -128,50 +132,73 @@ static void gps_server_task(void* pvParameters)
             uart_write_bytes(UART_NUM_1, initstr, sizeof(initstr));
 #endif
             int sock_ok = 1;
+            ESP_LOGI(TAG, "connected");
+
+            {
+                // Set tcp keepalive option
+                int keepAlive = 1;
+                int keepIdle = KEEPALIVE_IDLE;
+                int keepInterval = KEEPALIVE_INTERVAL;
+                int keepCount = KEEPALIVE_COUNT;            
+                setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(int));
+                setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(int));
+                setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
+                setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
+            }
+            
             while(sock_ok == 1)
             {
                 int len = 0;
-                uint8_t rx_buffer[RXBUF_SIZE+1];
-                len = recv(sock, rx_buffer, RXBUF_SIZE, MSG_DONTWAIT);
+#if 0                
+                len = recv(sock, gps_rx_buffer, RXBUF_SIZE, MSG_DONTWAIT);
+                ESP_LOGW(TAG, "rx %d",len);
 
                 if(len == EWOULDBLOCK)
                 {
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    //TaskDelay(1 / portTICK_PERIOD_MS);
                 }
 
                 if(len > 0)
                 {
-                    rx_buffer[len] = 0;
-                    ESP_LOGW(TAG, "TX[%d]:%s", len, rx_buffer);
-                    uart_write_bytes(UART_NUM_1, (const char*)rx_buffer, len);
+                    gps_rx_buffer[len] = 0;
+                    ESP_LOGW(TAG, "TX[%d]:%s", len, gps_rx_buffer);
+                    uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, len);
                 }
-                else if(len == 0)
+                else if(len < 0)
                 {
+                    ESP_LOGE(TAG, "%d",len);
                     sock_ok = -1;
                     continue;
                 }
-
+#endif
+                //ESP_LOGW(TAG, "w %d",(1+(RXBUF_SIZE/(10*5))));
                 // Read data from the UART
-                len = uart_read_bytes(UART_NUM_1, rx_buffer, RXBUF_SIZE, 1 / portTICK_RATE_MS);
+                len = uart_read_bytes(UART_NUM_1, gps_rx_buffer, RXBUF_SIZE, (1+(RXBUF_SIZE/(10*3))) / portTICK_RATE_MS);
                 if(len > 0)
                 {
-                    rx_buffer[len] = 0;
-                    int err = send(sock, rx_buffer, len, 0);
+                    gps_rx_buffer[len] = 0;
+                    //ESP_LOGW(TAG, "tx %d",len);
+                    int err = send(sock, gps_rx_buffer, len, 0);
                     if(err < 0)
                     {
+                        ESP_LOGE(TAG, "%d %d",len,err);
                         sock_ok = -2;
                         continue;
                     }
                 }
             }
-
+            
             if(sock != -1)
             {
                 ESP_LOGE(TAG, "Shutting down socket (%d) and restarting...",sock_ok);
                 shutdown(sock, 0);
                 close(sock);
-                sock = -1;
+                sock = -1;                
             }
+            
+            //shutdown(listen_sock, 0);            
+            //close(listen_sock);
+            //listen_sock = -1;
         }
     }
     vTaskDelete(NULL);
@@ -179,7 +206,7 @@ static void gps_server_task(void* pvParameters)
 
 void gps_init()
 {
-    xTaskCreate(gps_server_task, "gps_server", 3072, NULL, 5, NULL);
+    xTaskCreate(gps_server_task, "gps_server", 4096, NULL, 5, NULL);
 }
 
 void gps_exit()
