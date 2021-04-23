@@ -129,6 +129,7 @@
 
 #define GPS_UART1_TXD 18
 #define GPS_UART1_RXD 17
+#define GPS_UART1_INV
 
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA 13
@@ -161,6 +162,11 @@
 #endif
 
 #define DEFAULT_PRIO ((UBaseType_t)5)
+
+#define UBAT_CHARGE 13.5
+#define UBAT_FULL   13.0
+#define UBAT_EMPTY  10.5
+#define UBAT_DF      0.3
 
 void powersw(bool onoff);
 void pm_ref();

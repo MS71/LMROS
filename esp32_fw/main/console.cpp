@@ -24,6 +24,7 @@
 #ifdef CONFIG_PM_ENABLE
 #include "esp_pm.h"
 #endif
+#include "esp_wifi.h"
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -42,7 +43,12 @@ static const char* TAG = "CON";
 #define PROMPT "ros2mower>"
 static bool promt_active = false;
 
-extern double ubat;
+extern float g_ubat;
+extern float g_usolar;
+extern float g_ucharge;
+extern float g_uhal;
+extern float g_ibat;
+extern float g_temperature;
 
 static int con_sock = -1;
 
@@ -287,7 +293,12 @@ static void con_handle()
                 con_printf("* pmrel                   # release the power managment\n");
                 con_printf("* pmd                     # print pm lock infos\n");
 #endif
+                con_printf("* wifistop                # stop wifi\n");
                 con_printf("* pwron/pwroff            # enable/disable power\n");
+            }            
+            else if(strcasecmp("wifistop",rx_buffer)==0 )
+            {
+                esp_wifi_stop();
             }
             else if(strcasecmp("pwroff",rx_buffer)==0 )
             {
@@ -571,7 +582,7 @@ static void con_handle()
                 con_printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
                     (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
  
-               con_printf("ubat = %1.3f\n", ubat);
+               con_printf("ubat=%1.3fV ucharge=%1.3fV usolar=%1.3fV ibat=%1.3fA temp=%1.1f°C\n", g_ubat,g_ucharge,g_usolar,g_ibat,g_temperature);
             }
             else if(strcasecmp("shutdown",rx_buffer)==0)
             {

@@ -112,7 +112,7 @@ uint8_t bno055_calib_other = 0;
 extern ip4_addr_t s_ip_addr;
 struct SSD1306_Device I2CDisplay;
 
-double ubat = 0.0;
+extern float g_ubat;
 
 /**
  * @brief
@@ -1840,13 +1840,13 @@ static void i2c_task(void* param)
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
             i2c_md.ubat_mV = i2cnode_get_u16(STM32_I2C_ADDR, 0x5a);
 #endif // CONFIG_ROS2NODE_HW_ROS2ZUMO
-            ubat = (double)i2c_md.ubat_mV / 1000.0;
+            g_ubat = (double)i2c_md.ubat_mV / 1000.0;
 #endif
 
             // ESP_LOGW(TAG, "ubat=%f", ubat);
 
 #ifdef CONFIG_ENABLE_ROS2
-            i2c_md.ros2_data.msg_ubat.data = ubat;
+            i2c_md.ros2_data.msg_ubat.data = g_ubat;
             i2c_md.ros2_data.msg_ubat_valid = true;
 #endif
 

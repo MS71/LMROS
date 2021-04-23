@@ -561,6 +561,8 @@ void powersw(bool onoff)
 #endif
 }
 
+extern uint8_t wifi_error;
+uint8_t shtdwndly = 0;
 uint8_t g_adccnt = 0;
 float g_ubat = 0.0;
 float g_usolar = 0.0;
@@ -643,6 +645,7 @@ float adc1_get_voltage(adc1_channel_t channel, float k)
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
 static void adc1_timer_callback(void* arg)
 {
+    uint sleep_seconds = 30*60;
     float k1 = 110.0 / 10.0;
     float k2 = (2.505 / 2.816) * (20.0 / 10.0);
     adc_power_acquire();
@@ -656,51 +659,80 @@ static void adc1_timer_callback(void* arg)
     if(g_adccnt < 255)
         g_adccnt++;
 
-    wifi_ap_record_t ap_info = {};
-    esp_wifi_sta_get_ap_info(&ap_info);
     ESP_LOGW(TAG,
-        "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f rssi=%d bssid=%02x:%02x:%02x:%02x:%02x:%02x "
-        "channel=%d|%d",
-        g_adccnt, g_ubat, g_usolar, g_ucharge, g_ibat, ap_info.rssi, ap_info.bssid[0], ap_info.bssid[1],
-        ap_info.bssid[2], ap_info.bssid[3], ap_info.bssid[4], ap_info.bssid[5], ap_info.primary, ap_info.second);
+        "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f wifi_error=%d pmlock_cnt=%d",
+        g_adccnt, g_ubat, g_usolar, g_ucharge, g_ibat, wifi_error, pmlock_cnt);
 
     bool enter_sleep = false;
 
     if(g_adccnt == 10)
     {
-        powersw(true);
+        powersw(true); 
     }
 
     if(g_adccnt > 15)
     {
-        if(g_ubat < 13.0)
+        if(g_ubat < UBAT_FULL)
         {
             enter_sleep = true;
         }
-        if(g_usolar > (13.8 + 0.3))
+        if(g_usolar > (UBAT_CHARGE + UBAT_DF))
         {
             enter_sleep = false;
         }
-        if(g_ucharge > (13.8 + 0.3))
+        if(g_ucharge > (UBAT_CHARGE + UBAT_DF))
         {
             enter_sleep = false;
         }
-        if(g_ubat > 13.8)
+        if(g_ubat > UBAT_CHARGE)
         {
             enter_sleep = false;
-        }
+        } 
     }
     else if(g_adccnt > 5)
     {
-        if(g_ubat < 10.5)
+        if(g_ubat < UBAT_EMPTY)
         {
             enter_sleep = true;
         }
     }
-    if(enter_sleep == true)
+    
+    if((g_ubat > UBAT_CHARGE) && ((g_usolar > (UBAT_CHARGE + UBAT_DF)) || (g_ucharge > (UBAT_CHARGE + UBAT_DF))))
     {
-        ESP_LOGW(TAG, "Entering deep sleep (30 minutes)");
-        esp_sleep_enable_timer_wakeup(60UL * 60UL * 1000000UL); // sleep 1 hour
+        /* do short sleeps when bat is full and charging 
+         */
+        sleep_seconds = 60;
+    }
+    
+    if( wifi_error > 2 )
+    {
+        /* enter sleep mode when wifi is not connected
+         */
+        enter_sleep = true;
+    }
+    
+    if(console_connected()==true)
+    {
+        /* delay shutdown when console is conneted
+         */
+        shtdwndly = 255;
+    }
+
+    if( shtdwndly > 0 )
+    {
+        /* skip shutdoen in delay state
+         */
+        shtdwndly--;
+        enter_sleep = false;       
+    }
+        
+    if(enter_sleep==true) 
+    {
+        /* shutdown
+         */
+        shtdwndly = 0;
+        ESP_LOGW(TAG, "Entering deep sleep (%d minutes)",sleep_seconds/60);
+        esp_sleep_enable_timer_wakeup(1000000UL * sleep_seconds); // sleep 1 hour
         powersw(false);
         esp_wifi_stop();
         esp_deep_sleep_start();
@@ -849,41 +881,26 @@ void app_main(void)
     }
 
     pm_init();
-    pm_ref();
+
+#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
+#ifndef CONFIG_ESP32S2_ULP_COPROC_ENABLED
+    const esp_timer_create_args_t adc1_timer_args = { .callback = &adc1_timer_callback,
+        /* name is optional, but may help identify the timer when debugging */
+        .name = "adc1_timer" };
+    esp_timer_handle_t adc1_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&adc1_timer_args, &adc1_timer));
+    /* The timer has been created but is not running yet */
+
+    ESP_ERROR_CHECK(esp_timer_start_periodic(adc1_timer, 1000000));
+#endif
+#endif
 
     check_wifi_config();
-
-#if 0
-    powersw(true);
-    gpio_num_t gpio = (gpio_num_t)I2C_BUS_SCL;
-    gpio_reset_pin(gpio);
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
-    while(1) 
-	{
-        //ESP_LOGI(TAG, "0");
-		gpio_set_level(gpio, 0);
-		vTaskDelay(10 / portTICK_PERIOD_MS);
-        //ESP_LOGI(TAG, "1");
-		gpio_set_level(gpio, 1);
-		vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-#endif
 
     /* start wifi ...
      */
     ESP_LOGI(TAG, "init WIFI ...");
     initialise_wifi();
-
-#if 0
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    while(1)
-    {
-        ESP_LOGW(TAG, "adc1.0=%d",
-            adc1_get_raw((adc1_channel_t)ADC1_CHANNEL_0));
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-#endif
 
 #ifdef CONFIG_ENABLE_SPIFS
     ESP_LOGI(TAG, "init SPIFS ...");
@@ -961,22 +978,11 @@ void app_main(void)
     ev = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
     ESP_LOGI(TAG, "... Connected");
 
+    pm_ref();
+
 #if defined(CONFIG_PARTITION_TABLE_CUSTOM) || defined(CONFIG_PARTITION_TABLE_TWO_OTA)
     ESP_LOGI(TAG, "starting ota ...");
     xTaskCreate(&ota_server_task, "ota_server_task", 4096, NULL, DEFAULT_PRIO, NULL);
-#endif
-
-#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
-#ifndef CONFIG_ESP32S2_ULP_COPROC_ENABLED
-    const esp_timer_create_args_t adc1_timer_args = { .callback = &adc1_timer_callback,
-        /* name is optional, but may help identify the timer when debugging */
-        .name = "adc1_timer" };
-    esp_timer_handle_t adc1_timer;
-    ESP_ERROR_CHECK(esp_timer_create(&adc1_timer_args, &adc1_timer));
-    /* The timer has been created but is not running yet */
-
-    ESP_ERROR_CHECK(esp_timer_start_periodic(adc1_timer, 1000000));
-#endif
 #endif
 
     // my_deflog = esp_log_set_vprintf(my_log);

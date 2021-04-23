@@ -64,6 +64,9 @@ static void gps_server_task(void* pvParameters)
     uart_driver_install(UART_NUM_1, RXBUF_SIZE * 2, 0, 0, NULL, intr_alloc_flags);
     uart_param_config(UART_NUM_1, &uart_config);
     uart_set_pin(UART_NUM_1, GPS_UART1_TXD, GPS_UART1_RXD, -1, -1);
+#ifdef GPS_UART1_INV
+    uart_set_line_inverse(UART_NUM_1,UART_SIGNAL_TXD_INV | UART_SIGNAL_RXD_INV);
+#endif
 
     while(1)
     {
@@ -115,7 +118,7 @@ static void gps_server_task(void* pvParameters)
                 break;
             }
 
-#if 1
+#if 0
 /*
 !UBX CFG-GNSS 0 32 32 1 0 10 32 0 1
 !UBX CFG-GNSS 0 32 32 1 6 8 16 0 1
@@ -134,6 +137,7 @@ static void gps_server_task(void* pvParameters)
             int sock_ok = 1;
             ESP_LOGI(TAG, "connected");
 
+#if 1
             {
                 // Set tcp keepalive option
                 int keepAlive = 1;
@@ -145,32 +149,27 @@ static void gps_server_task(void* pvParameters)
                 setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(int));
                 setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(int));
             }
+#endif
             
             while(sock_ok == 1)
             {
                 int len = 0;
-#if 0                
-                len = recv(sock, gps_rx_buffer, RXBUF_SIZE, MSG_DONTWAIT);
-                ESP_LOGW(TAG, "rx %d",len);
 
-                if(len == EWOULDBLOCK)
-                {
-                    //TaskDelay(1 / portTICK_PERIOD_MS);
-                }
+                len = recv(sock, gps_rx_buffer, RXBUF_SIZE, MSG_DONTWAIT);
 
                 if(len > 0)
                 {
                     gps_rx_buffer[len] = 0;
-                    ESP_LOGW(TAG, "TX[%d]:%s", len, gps_rx_buffer);
+                    ESP_LOGW(TAG, "TXD[%d]:%s", len, gps_rx_buffer);
                     uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, len);
                 }
-                else if(len < 0)
+                else if(len < 0 && errno != EWOULDBLOCK)
                 {
                     ESP_LOGE(TAG, "%d",len);
                     sock_ok = -1;
                     continue;
                 }
-#endif
+
                 //ESP_LOGW(TAG, "w %d",(1+(RXBUF_SIZE/(10*5))));
                 // Read data from the UART
                 len = uart_read_bytes(UART_NUM_1, gps_rx_buffer, RXBUF_SIZE, (1+(RXBUF_SIZE/(10*3))) / portTICK_RATE_MS);

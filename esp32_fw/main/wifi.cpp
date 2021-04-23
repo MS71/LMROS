@@ -32,6 +32,7 @@ uint8_t s_ip_addr_changed = 1;
 
 /* rrm ctx */
 int rrm_ctx = 0;
+uint8_t wifi_error = 0;
 
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 EventGroupHandle_t wifi_event_group;
@@ -108,25 +109,36 @@ void check_wifi_config()
  */
 static void event_handler(void* arg, esp_event_base_t event_base,
 		int32_t event_id, void* event_data)
-{
-	if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+{    
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        wifi_error = 0;
 		esp_wifi_connect();
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
 		wifi_event_sta_disconnected_t *disconn = (wifi_event_sta_disconnected_t*)event_data;
 		if (disconn->reason == WIFI_REASON_ROAMING) {
 			ESP_LOGI(TAG, "station roaming, do nothing");
+            
+		} else if (disconn->reason == WIFI_REASON_NO_AP_FOUND) {
+			ESP_LOGI(TAG, "WIFI_REASON_NO_AP_FOUND");
+            if(wifi_error<255) wifi_error++;
+
+			esp_wifi_connect();
+            
+            xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
+            s_ip_addr.addr = 0;
+            s_ip_addr_changed = 1;
 		} else {
+            if(wifi_error<255) wifi_error++;
+
 			esp_wifi_connect();
             
             xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
             s_ip_addr.addr = 0;
             s_ip_addr_changed = 1;
 		}
-#ifdef CONFIG_PM_ENABLE
-        //ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
-#endif        
 
 	} else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+        wifi_error = 0;
 #if CONFIG_ROOMING!=0
 		if (CONFIG_ROOMING) {
 			ESP_LOGI(TAG, "setting rssi threshold as %d\n", CONFIG_ROOMING);
@@ -134,6 +146,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 		}
 #endif
 	} else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP ) {
+        wifi_error = 0;
 		ip_event_got_ip_t *data = (ip_event_got_ip_t*)event_data;
         s_ip_addr = data->ip_info.ip;
         ESP_LOGW(TAG, "SYSTEM_EVENT_STA_GOT_IP %d.%d.%d.%d",
@@ -143,10 +156,6 @@ static void event_handler(void* arg, esp_event_base_t event_base,
             (s_ip_addr.addr >> 24) & 0xff);
         s_ip_addr_changed = 1;
      
-#ifdef CONFIG_PM_ENABLE
-        //ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
-#endif
-
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
 #if 1
         wifi_ap_record_t ap_info = {};
@@ -450,7 +459,8 @@ void initialise_wifi(void)
 #endif
 #endif
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-	ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
+	ESP_ERROR_CHECK( esp_wifi_init(&cfg) );    
+	ESP_ERROR_CHECK( esp_event_handler_register(WIFI_EVENT, WIFI_REASON_NO_AP_FOUND, &event_handler, NULL) );
 	ESP_ERROR_CHECK( esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL) );
 	ESP_ERROR_CHECK( esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL) );
 #if CONFIG_ROOMING!=0
@@ -461,9 +471,10 @@ void initialise_wifi(void)
 	ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_FLASH) );
     wifi_config_t wifi_config = {};
     strcpy((char*)wifi_config.sta.ssid, my_wifi_ssid);
+    //strcpy((char*)wifi_config.sta.ssid, "otto");
     strcpy((char*)wifi_config.sta.password, my_wifi_psk);
 #ifdef CONFIG_PM_ENABLE
-    wifi_config.sta.listen_interval = 20;
+    wifi_config.sta.listen_interval = 30;
 #endif
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     wifi_config.sta.rm_enabled = 1;
@@ -478,7 +489,8 @@ void initialise_wifi(void)
 	ESP_ERROR_CHECK( esp_wifi_start() );
     tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, HOSTNAME);
 #ifdef CONFIG_PM_ENABLE
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MAX_MODEM));
+    ESP_LOGW(TAG, "enable wifi PS WIFI_PS_MIN_MODEM");
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_MIN_MODEM));
 #endif
 
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
