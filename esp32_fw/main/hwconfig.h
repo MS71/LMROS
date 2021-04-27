@@ -164,7 +164,7 @@
 #define DEFAULT_PRIO ((UBaseType_t)5)
 
 #define UBAT_CHARGE 13.5
-#define UBAT_FULL   13.0
+#define UBAT_FULL   12.5
 #define UBAT_EMPTY  10.5
 #define UBAT_DF      0.3
 

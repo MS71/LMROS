@@ -537,6 +537,7 @@ void beep(int onoff)
 #endif
 }
 
+static uint8_t power_pin = 0;
 void powersw(bool onoff)
 {
 #ifdef CONFIG_ROS2NODE_HW_S2_MOWER
@@ -548,6 +549,7 @@ void powersw(bool onoff)
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(gpio, (onoff == true) ? 1 : 0);
     gpio_hold_en(gpio);
+    power_pin = (onoff == true) ? 1 : 0;
 
 #if 0
     gpio = (gpio_num_t)GPIO_PWR_BUS_ON;
@@ -559,6 +561,11 @@ void powersw(bool onoff)
 #endif
 
 #endif
+}
+
+uint8_t powerstate()
+{
+    return power_pin;
 }
 
 extern uint8_t wifi_error;
@@ -659,9 +666,11 @@ static void adc1_timer_callback(void* arg)
     if(g_adccnt < 255)
         g_adccnt++;
 
+#if 1
     ESP_LOGW(TAG,
         "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f wifi_error=%d pmlock_cnt=%d",
         g_adccnt, g_ubat, g_usolar, g_ucharge, g_ibat, wifi_error, pmlock_cnt);
+#endif
 
     bool enter_sleep = false;
 

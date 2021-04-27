@@ -1,5 +1,14 @@
-idf_component_register(SRCS "app_main.cpp" "ros2node.cpp" "cam.cpp" "console.cpp" "gps.cpp" "i2chandler.cpp" "webui.cpp" "wifi.cpp" INCLUDE_DIRS . ulp)
-set(COMPONENT_REQUIRES ulp server websocket micro-ROS)
+idf_component_register(SRCS "app_main.cpp" "ros2node.cpp" "cam.cpp" "console.cpp" "gps.cpp" "i2chandler.cpp" "webui.cpp" "wifi.cpp" "libnmea/nmea/nmea.c" "libnmea/nmea/parser_static.c" "libnmea/parsers/gpgga.c" "libnmea/parsers/parse.c"  INCLUDE_DIRS . ulp)
+set(COMPONENT_REQUIRES ulp server websocket micro-ROS libnmea/nmea libnmea/parsers )
+
+add_compile_definitions(PARSER_COUNT=1 ENABLE_GPGGA=1)
+
+include_directories(libnmea/nmea libnmea/parsers)
+
+#"libnmea/nmea/parser.c" 
+#main/libnmea/nmea/nmea.c  main/libnmea/nmea/parser.c  main/libnmea/nmea/parser_static.c
+#main/libnmea/parsers/gpgga.c  main/libnmea/parsers/gpgsa.c  main/libnmea/parsers/gprmc.c  main/libnmea/parsers/gpvtg.c
+#main/libnmea/parsers/gpgll.c  main/libnmea/parsers/gpgsv.c  main/libnmea/parsers/gptxt.c  main/libnmea/parsers/parse.c
 
 #
 # ULP support additions to component CMakeLists.txt.

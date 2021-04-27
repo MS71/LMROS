@@ -254,7 +254,7 @@ static void con_handle()
     {
         esp_chip_info_t chip_info;
         esp_chip_info(&chip_info);
-        con_printf( "This is ESP32 chip with %d CPU cores, WiFi%s%s, ", chip_info.cores,
+        con_printf( "\nThis is ESP32 chip with %d CPU cores, WiFi%s%s, ", chip_info.cores,
             (chip_info.features & CHIP_FEATURE_BT) ? "/BT" : "", (chip_info.features & CHIP_FEATURE_BLE) ? "/BLE" : "");
         con_printf("silicon revision %d, ", chip_info.revision);
         con_printf("%dMB %s flash\n", spi_flash_get_chip_size() / (1024 * 1024),
@@ -294,6 +294,7 @@ static void con_handle()
                 con_printf("* pmd                     # print pm lock infos\n");
 #endif
                 con_printf("* wifistop                # stop wifi\n");
+                con_printf("* ntrip_cfg               # ntrip_cfg host port user passwd mountpoint\n");
                 con_printf("* pwron/pwroff            # enable/disable power\n");
             }            
             else if(strcasecmp("wifistop",rx_buffer)==0 )
@@ -479,6 +480,29 @@ static void con_handle()
                 if( n==1 )
                 {
                     con_nfs_set_int("console","loglevel",p1);
+                }
+            }
+            else if(strstr(rx_buffer,"ntrip_cfg")==rx_buffer)
+            {
+                char p1[128] = "";
+                int p2 = 0;
+                char p3[32] = "";
+                char p4[32] = "";
+                char p5[32] = "";
+                int n = sscanf(rx_buffer,"ntrip_cfg %s %d %s %s %s",p1,&p2,p3,p4,p5);
+                if( n==5 )
+                {
+                    nvs_handle my_handle;
+                    esp_err_t err = nvs_open("ntrip", NVS_READWRITE, &my_handle);
+                    if (err == ESP_OK) 
+                    {
+                        nvs_set_str(my_handle, "host", p1);
+                        nvs_set_u16(my_handle, "port", p2);
+                        nvs_set_str(my_handle, "username", p3);
+                        nvs_set_str(my_handle, "password", p4);
+                        nvs_set_str(my_handle, "mointpoint", p5);
+                        nvs_close(my_handle);
+                    }
                 }
             }
             else if(strstr(rx_buffer,"ros_remote_set")==rx_buffer)
