@@ -39,6 +39,9 @@
 
 #include "hwconfig.h"
 
+#undef ENABLE_NTRIP_TEST
+#undef ENABLE_ASYNC_HTTP_CLIENT
+
 static const char* TAG = "GPS";
 
 extern EventGroupHandle_t wifi_event_group;
@@ -137,6 +140,7 @@ static void gps_tcpserv_stop()
         gps_md.tcpserv.listen_sock = 0;
     }    
 }
+
 
 /**
  * @brief 
@@ -267,8 +271,52 @@ void gps_ntrip_stop()
         esp_http_client_cleanup(gps_md.ntrip.http);
         gps_md.ntrip.http = NULL;
         gps_md.ntrip.reconnect_timeout = esp_timer_get_time() + 1000000;
+
+        if(uart_is_driver_installed(UART_NUM_1))
+        {
+            sprintf((char*)gps_rx_buffer,"$PESP,NTRIP,SRV,DISCONNECTED");
+            uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, strlen((char*)gps_rx_buffer));
+        }
+
     }
 }
+
+#if 0
+
+static void https_async(void)
+{
+    esp_http_client_config_t config = {
+        .url = "https://postman-echo.com/post",
+        .event_handler = _http_event_handler,
+        .cert_pem = postman_root_cert_pem_start,
+        .is_async = true,
+        .timeout_ms = 5000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err;
+    const char *post_data = "Using a Palantír requires a person with great strength of will and wisdom. The Palantíri were meant to "
+                            "be used by the Dúnedain to communicate throughout the Realms in Exile. During the War of the Ring, "
+                            "the Palantíri were used by many individuals. Sauron used the Ithil-stone to take advantage of the users "
+                            "of the other two stones, the Orthanc-stone and Anor-stone, but was also susceptible to deception himself.";
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_post_field(client, post_data, strlen(post_data));
+    while (1) {
+        err = esp_http_client_perform(client);
+        if (err != ESP_ERR_HTTP_EAGAIN) {
+            break;
+        }
+    }
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTPS Status = %d, content_length = %d",
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE(TAG, "Error perform http request %s", esp_err_to_name(err));
+    }
+    esp_http_client_cleanup(client);
+}
+
+#endif
 
 /**
  * @brief 
@@ -294,17 +342,22 @@ static void gps_ntrip_start()
         .host = gps_md.ntrip.host,
         .port = gps_md.ntrip.port,
         .method = HTTP_METHOD_GET,
-        //.is_async = true,
-        //.timeout_ms = 100,
     };
     config.path = (const char*)gps_md.ntrip.mountpoint;
     config.auth_type = HTTP_AUTH_TYPE_BASIC;
     config.username = (const char*)gps_md.ntrip.username;
     config.password = (const char*)gps_md.ntrip.password;
     config.event_handler = gps_ntrip_http_event_handle;
+#ifdef ENABLE_ASYNC_HTTP_CLIENT
+    config.is_async = true;
+    config.timeout_ms = 10;
+#endif
 
     // Initialize client
     gps_md.ntrip.http = esp_http_client_init(&config);
+#ifdef ENABLE_ASYNC_HTTP_CLIENT
+    ... todo ...
+#else
     esp_http_client_set_header(gps_md.ntrip.http, "Ntrip-Version", "Ntrip/2.0");
     esp_http_client_set_header(gps_md.ntrip.http, "User-Agent", "NTRIP " NTRIP_CLIENT_NAME "/2.0");
     esp_http_client_set_header(gps_md.ntrip.http, "Connection", "close");
@@ -339,17 +392,26 @@ static void gps_ntrip_start()
         gps_ntrip_stop();
         return;
     }
+#endif
+
+    if(uart_is_driver_installed(UART_NUM_1))
+    {
+        sprintf((char*)gps_rx_buffer,"$PESP,NTRIP,SRV,CONNECTED,%s:%d,%s", 
+        gps_md.ntrip.host, gps_md.ntrip.port, gps_md.ntrip.mountpoint);
+        uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, strlen((char*)gps_rx_buffer));
+    }
 
     ESP_LOGI(TAG, "Successfully connected");
-    // uart_nmea("$PESP,NTRIP,SRV,CONNECTED,%s:%d,%s", host, port, mountpoint);
 }
-
+    
 /**
  * @brief 
  */
 static void gps_ntrip_handle()
 {
+#ifndef ENABLE_NTRIP_TEST
     if(gps_md.ntrip.http == NULL && gps_md.uart.gga.position_fix > 0)
+#endif
     {
         gps_ntrip_start();
     }
@@ -357,6 +419,9 @@ static void gps_ntrip_handle()
     if(gps_md.ntrip.http != NULL)
     {
         ESP_LOGI(TAG, "gps_ntrip_handle ...");
+#ifdef ENABLE_ASYNC_HTTP_CLIENT
+        ... todo ...
+#else
         char* buffer = (char*)malloc(BUFFER_SIZE);
         if(buffer != NULL)
         {
@@ -372,6 +437,7 @@ static void gps_ntrip_handle()
             }
             free(buffer);
         }
+#endif
         ESP_LOGI(TAG, "gps_ntrip_handle ... done");
     }
 }
@@ -551,6 +617,9 @@ static void gps_task(void* pvParameters)
 
         gps_uart_start();
         gps_tcpserv_start();
+#ifdef ENABLE_NTRIP_TEST
+        gps_ntrip_start();
+#endif
 
         while(true)
         {
@@ -593,19 +662,19 @@ void gps_init()
         nvs_close(my_handle);
     }
 
+    ESP_LOGI(TAG, "gps_init host=%s:%d user=%s passwd=%s mointpoint=%s", 
+        gps_md.ntrip.host, 
+        gps_md.ntrip.port, 
+        gps_md.ntrip.username,
+        gps_md.ntrip.password,
+        gps_md.ntrip.mountpoint);
+
     if(gps_md.ntrip.port != 0 && 
         strlen(gps_md.ntrip.host) != 0 && 
         strlen(gps_md.ntrip.username) != 0 &&
         strlen(gps_md.ntrip.password) != 0 &&
         strlen(gps_md.ntrip.mountpoint) != 0)
     {
-        ESP_LOGI(TAG, "gps_init %s %d %s %s %s", 
-            gps_md.ntrip.host, 
-            gps_md.ntrip.port, 
-            gps_md.ntrip.username,
-            gps_md.ntrip.password,
-            gps_md.ntrip.mountpoint);
-
         xTaskCreate(gps_task, "gps_task", 16384, NULL, DEFAULT_PRIO, NULL);
     }
 }
