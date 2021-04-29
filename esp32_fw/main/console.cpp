@@ -242,7 +242,7 @@ void con_nfs_set_int(const char* topic,const char* name,int32_t value)
     }
 }
 
-#define RX_BUFFER_SIZE 128
+#define RX_BUFFER_SIZE 256
 /**
  * @brief 
  */
@@ -490,7 +490,8 @@ static void con_handle()
                 char p4[32] = "";
                 char p5[32] = "";
                 int n = sscanf(rx_buffer,"ntrip_cfg %s %d %s %s %s",p1,&p2,p3,p4,p5);
-                if( n==5 )
+                //con_printf("n=%d gps_cfg %s %d %s %s %s", n, p1, p2, p3, p4, p5);
+                if(n == 5)
                 {
                     nvs_handle my_handle;
                     esp_err_t err = nvs_open("ntrip", NVS_READWRITE, &my_handle);
@@ -500,8 +501,10 @@ static void con_handle()
                         nvs_set_u16(my_handle, "port", p2);
                         nvs_set_str(my_handle, "username", p3);
                         nvs_set_str(my_handle, "password", p4);
-                        nvs_set_str(my_handle, "mointpoint", p5);
+                        nvs_set_str(my_handle, "mountpoint", p5);
                         nvs_close(my_handle);
+                        con_printf("gps_cfg %s %d %s %s %s\n", 
+                            p1, p2, p3, p4, p5);
                     }
                 }
             }
