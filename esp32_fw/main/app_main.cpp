@@ -667,7 +667,7 @@ static void adc1_timer_callback(void* arg)
         g_adccnt++;
 
 #if 1
-    ESP_LOGW(TAG,
+    ESP_LOGD(TAG,
         "cnt=%d ubat=%3.1f usolar=%3.1f ucharge=%3.1f ibat=%1.6f wifi_error=%d pmlock_cnt=%d",
         g_adccnt, g_ubat, g_usolar, g_ucharge, g_ibat, wifi_error, pmlock_cnt);
 #endif

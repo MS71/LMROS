@@ -39,9 +39,6 @@
 
 #include "hwconfig.h"
 
-#undef ENABLE_NTRIP_TEST
-#undef ENABLE_ASYNC_HTTP_CLIENT
-
 static const char* TAG = "GPS";
 
 extern EventGroupHandle_t wifi_event_group;
@@ -61,15 +58,18 @@ uint8_t gps_sapos_ready = 0;
 #define RXBUF_SIZE 1024
 uint8_t gps_rx_buffer[RXBUF_SIZE + 2];
 
-#define BUFFER_SIZE 512
-
 static void gps_uart_handle();
 
-struct {
-    struct {
+struct
+{
+    struct
+    {
         nmea_gpgga_s gga;
     } uart;
-    struct {
+    struct
+    {
+        uint8_t needed;
+        uint8_t reconnect;
         char host[48];
         uint16_t port;
         char username[32];
@@ -77,73 +77,251 @@ struct {
         char mountpoint[32];
         int64_t reconnect_timeout;
         esp_http_client_handle_t http;
+        int64_t gga_send_timeout;
+        int64_t gga_print_timeout;
+        char gga_line[256];
+        uint ntrip_rx_bytes;
     } ntrip;
-    struct {
+    struct
+    {
         int listen_sock;
-        int client_sock;        
+        int client_sock;
     } tcpserv;
 } gps_md = {};
 
+static void gps_tcpserv_handle();
+static void gps_uart_handle();
+
 /**
- * @brief 
+ * @brief
  * @param evt
- * @return 
+ * @return
  */
-esp_err_t gps_ntrip_http_event_handle(esp_http_client_event_t* evt)
+esp_err_t gps_ntrip_ev(esp_http_client_event_t* evt)
 {
     switch(evt->event_id)
     {
     case HTTP_EVENT_ERROR:
-        ESP_LOGI(TAG, "HTTP_EVENT_ERROR");
+        ESP_LOGI(TAG, "ntrip_ev() HTTP_EVENT_ERROR");
         break;
     case HTTP_EVENT_ON_CONNECTED:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
+        ESP_LOGI(TAG, "ntrip_ev() HTTP_EVENT_ON_CONNECTED");
         break;
     case HTTP_EVENT_HEADER_SENT:
-        ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
+        ESP_LOGI(TAG, "ntrip_ev() HTTP_EVENT_HEADER_SENT");
         break;
     case HTTP_EVENT_ON_HEADER:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER");
+        ESP_LOGI(TAG, "ntrip_ev() HTTP_EVENT_ON_HEADER");
         ESP_LOGI(TAG, "%.*s", evt->data_len, (char*)evt->data);
         break;
     case HTTP_EVENT_ON_DATA:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+        //ESP_LOGV(TAG, "ntrip_ev() HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+        gps_md.ntrip.ntrip_rx_bytes += evt->data_len;
+#if 0        
         if(!esp_http_client_is_chunked_response(evt->client))
         {
             ESP_LOGI(TAG, "%.*s", evt->data_len, (char*)evt->data);
+        }        
+#endif        
+        if(uart_is_driver_installed(UART_NUM_1))
+        {
+            uart_write_bytes(UART_NUM_1, (const char*)evt->data, evt->data_len);
         }
-        uart_write_bytes(UART_NUM_1, (const char*)evt->data, evt->data_len);
         break;
     case HTTP_EVENT_ON_FINISH:
-        ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
+        ESP_LOGI(TAG, "ntrip_ev() HTTP_EVENT_ON_FINISH");
         break;
     case HTTP_EVENT_DISCONNECTED:
-        ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
+        ESP_LOGI(TAG, "ntrip_ev() HTTP_EVENT_DISCONNECTED");
         break;
     }
     return ESP_OK;
 }
 
 /**
- * @brief 
+ * @brief
+ * @param pvParameters
  */
-static void gps_tcpserv_stop()
+static void ntrip_task(void* pvParameters)
 {
-    if( gps_md.tcpserv.client_sock != 0 )
+    (void)pvParameters;
+    ESP_LOGI(TAG, "ntrip_task()  ...");
+   
+    while(true)
     {
-        close(gps_md.tcpserv.client_sock);
-        gps_md.tcpserv.client_sock = 0;
+        int ntrip_delay = 3000;
+        
+        EventBits_t ev = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1 / portTICK_PERIOD_MS);
+        if(ev != CONNECTED_BIT)
+        {
+            vTaskDelay(ntrip_delay / portTICK_PERIOD_MS);
+            ESP_LOGI(TAG, "ntrip_task delay #1, retry");
+            continue;
+        }
+        
+        if(gps_md.ntrip.needed == 0)
+        {
+            vTaskDelay(ntrip_delay / portTICK_PERIOD_MS);
+            ESP_LOGI(TAG, "ntrip_task delay #2, retry");
+            continue;
+        }
+        
+        gps_md.ntrip.gga_line[0] = 0;
+        gps_md.ntrip.reconnect = 0;
+
+        while(gps_md.ntrip.needed != 0)
+        {
+            if(gps_md.ntrip.reconnect_timeout > esp_timer_get_time())
+            {
+                vTaskDelay(ntrip_delay / portTICK_PERIOD_MS);
+                ESP_LOGI(TAG, "ntrip_task delay #3, retry");
+                continue;
+            }
+
+            ESP_LOGI(TAG, "ntrip_task starting ...");
+
+            // Configure host URL
+            esp_http_client_config_t config = {
+                .host = gps_md.ntrip.host,
+                .port = gps_md.ntrip.port,
+                .method = HTTP_METHOD_GET,
+            };
+            config.path = (const char*)gps_md.ntrip.mountpoint;
+            config.auth_type = HTTP_AUTH_TYPE_BASIC;
+            config.username = (const char*)gps_md.ntrip.username;
+            config.password = (const char*)gps_md.ntrip.password;
+            config.event_handler = gps_ntrip_ev;
+
+            // Initialize client
+            gps_md.ntrip.http = esp_http_client_init(&config);
+            esp_http_client_set_header(gps_md.ntrip.http, "Ntrip-Version", "Ntrip/2.0");
+            esp_http_client_set_header(gps_md.ntrip.http, "User-Agent", "NTRIP " NTRIP_CLIENT_NAME "/2.0");
+            esp_http_client_set_header(gps_md.ntrip.http, "Connection", "close");
+
+            esp_err_t err = esp_http_client_open(gps_md.ntrip.http, 0);
+            if(err != ESP_OK)
+            {
+                ESP_LOGE(TAG, "ntrip_task() Could not open HTTP connection: %d %s", err, esp_err_to_name(err));
+                gps_md.ntrip.reconnect = 1;
+                break;
+            }
+
+            int content_length = esp_http_client_fetch_headers(gps_md.ntrip.http);
+            if(content_length < 0)
+            {
+                ESP_LOGE(TAG, "ntrip_task() Could not connect to caster: %d %s", errno, strerror(errno));
+                gps_md.ntrip.reconnect = 1;
+                break;
+            }
+
+            int status_code = esp_http_client_get_status_code(gps_md.ntrip.http);
+            if(status_code != 200)
+            {
+                ESP_LOGE(TAG, "ntrip_task() Could not access mountpoint: %d", status_code);
+                gps_md.ntrip.reconnect = 1;
+                break;
+            }
+
+            if(!esp_http_client_is_chunked_response(gps_md.ntrip.http))
+            {
+                ESP_LOGE(
+                    TAG, "ntrip_task() Caster did not respond with chunked transfer encoding: content_length %d", content_length);
+                gps_md.ntrip.reconnect = 1;
+                break;
+            }
+#if 0
+            if(uart_is_driver_installed(UART_NUM_1))
+            {
+                sprintf((char*)gps_rx_buffer, "$PESP,NTRIP,SRV,CONNECTED,%s:%d,%s", gps_md.ntrip.host,
+                    gps_md.ntrip.port, gps_md.ntrip.mountpoint);
+                uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, strlen((char*)gps_rx_buffer));
+            }
+#endif
+            ESP_LOGI(TAG, "ntrip_task() Successfully connected");
+
+            while(gps_md.ntrip.needed != 0 && gps_md.ntrip.host != NULL && gps_md.ntrip.reconnect==0)
+            {
+                int ret;
+                char rx_buffer[512];
+                //ESP_LOGI(TAG, "gps_ntrip_handle ...");
+
+                if(gps_md.uart.gga.position_fix > 0)
+                {
+                    int n = strlen(gps_md.ntrip.gga_line);
+                    if(gps_md.ntrip.gga_send_timeout < esp_timer_get_time() && n>0)
+                    {
+                        gps_md.ntrip.gga_send_timeout = esp_timer_get_time() + 1000000;
+
+                        //ESP_LOGI(TAG, "=>NTRIP: %s", gps_md.ntrip.gga_line);
+                        ret = esp_http_client_write(gps_md.ntrip.http, (char*)gps_md.ntrip.gga_line, n);
+                        gps_md.ntrip.gga_line[0] = 0;
+                        if(ret<0)
+                        {
+                            ESP_LOGW(TAG, "ntrip_task() send error %d",ret);
+                            gps_md.ntrip.reconnect = 1;
+                            break;
+                        }
+                    }
+                }
+
+                ret = esp_http_client_read(gps_md.ntrip.http, rx_buffer, sizeof(rx_buffer));
+                if(ret < 0)
+                {
+                    ESP_LOGW(TAG, "ntrip_task() read error %d",ret);
+                    gps_md.ntrip.reconnect = 1;
+                    break;
+                }
+            }
+
+            gps_md.ntrip.reconnect_timeout = esp_timer_get_time() + 1000000;
+
+            ESP_LOGI(TAG, "ntrip_task() Disconnected");
+            if(gps_md.ntrip.http != NULL)
+            {
+                esp_http_client_close(gps_md.ntrip.http);
+                esp_http_client_cleanup(gps_md.ntrip.http);
+                gps_md.ntrip.http = NULL;
+            }
+        }
     }
-    if( gps_md.tcpserv.listen_sock != 0 )
-    {
-        close(gps_md.tcpserv.listen_sock);
-        gps_md.tcpserv.listen_sock = 0;
-    }    
 }
 
 
 /**
- * @brief 
+ * @brief
+ */
+void gps_ntrip_start()
+{
+    gps_md.ntrip.needed = 1;
+}
+
+/**
+ * @brief
+ */
+void gps_ntrip_stop()
+{
+    gps_md.ntrip.needed = 0;
+}
+
+/**
+ * @brief
+ */
+static void gps_tcpserv_stop()
+{
+    if(gps_md.tcpserv.client_sock != 0)
+    {
+        close(gps_md.tcpserv.client_sock);
+        gps_md.tcpserv.client_sock = 0;
+    }
+    if(gps_md.tcpserv.listen_sock != 0)
+    {
+        close(gps_md.tcpserv.listen_sock);
+        gps_md.tcpserv.listen_sock = 0;
+    }
+}
+
+/**
+ * @brief
  */
 static void gps_tcpserv_start()
 {
@@ -191,7 +369,7 @@ static void gps_tcpserv_start()
     }
 }
 /**
- * @brief 
+ * @brief
  */
 static void gps_tcpserv_handle()
 {
@@ -199,12 +377,12 @@ static void gps_tcpserv_handle()
     {
         gps_tcpserv_start();
     }
-    
+
     if(gps_md.tcpserv.listen_sock != 0)
     {
         if(gps_md.tcpserv.client_sock == 0)
         {
-            //ESP_LOGI(TAG, "gps_tcpserv_handle ...");
+            // ESP_LOGI(TAG, "gps_tcpserv_handle ...");
 
             fd_set rfds;
             struct timeval tv;
@@ -213,12 +391,12 @@ static void gps_tcpserv_handle()
             FD_SET(gps_md.tcpserv.listen_sock, &rfds);
             tv.tv_sec = 0;
             tv.tv_usec = 1000;
-            retval = select(gps_md.tcpserv.listen_sock+1, &rfds, NULL, NULL, &tv);
+            retval = select(gps_md.tcpserv.listen_sock + 1, &rfds, NULL, NULL, &tv);
 
             if(retval == -1)
             {
                 perror("select()");
-                gps_tcpserv_stop();
+                // gps_tcpserv_stop();
             }
             else if(retval)
             {
@@ -261,195 +439,13 @@ static void gps_tcpserv_handle()
 }
 
 /**
- * @brief 
- */
-void gps_ntrip_stop()
-{
-    if(gps_md.ntrip.http != NULL)
-    {
-        esp_http_client_close(gps_md.ntrip.http);
-        esp_http_client_cleanup(gps_md.ntrip.http);
-        gps_md.ntrip.http = NULL;
-        gps_md.ntrip.reconnect_timeout = esp_timer_get_time() + 1000000;
-
-        if(uart_is_driver_installed(UART_NUM_1))
-        {
-            sprintf((char*)gps_rx_buffer,"$PESP,NTRIP,SRV,DISCONNECTED");
-            uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, strlen((char*)gps_rx_buffer));
-        }
-
-    }
-}
-
-#if 0
-
-static void https_async(void)
-{
-    esp_http_client_config_t config = {
-        .url = "https://postman-echo.com/post",
-        .event_handler = _http_event_handler,
-        .cert_pem = postman_root_cert_pem_start,
-        .is_async = true,
-        .timeout_ms = 5000,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    esp_err_t err;
-    const char *post_data = "Using a Palantír requires a person with great strength of will and wisdom. The Palantíri were meant to "
-                            "be used by the Dúnedain to communicate throughout the Realms in Exile. During the War of the Ring, "
-                            "the Palantíri were used by many individuals. Sauron used the Ithil-stone to take advantage of the users "
-                            "of the other two stones, the Orthanc-stone and Anor-stone, but was also susceptible to deception himself.";
-    esp_http_client_set_method(client, HTTP_METHOD_POST);
-    esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    while (1) {
-        err = esp_http_client_perform(client);
-        if (err != ESP_ERR_HTTP_EAGAIN) {
-            break;
-        }
-    }
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTPS Status = %d, content_length = %d",
-                esp_http_client_get_status_code(client),
-                esp_http_client_get_content_length(client));
-    } else {
-        ESP_LOGE(TAG, "Error perform http request %s", esp_err_to_name(err));
-    }
-    esp_http_client_cleanup(client);
-}
-
-#endif
-
-/**
- * @brief 
- */
-static void gps_ntrip_start()
-{
-    gps_md.ntrip.http = NULL;
-    
-    if( gps_md.ntrip.reconnect_timeout > esp_timer_get_time() )
-    {
-        return;
-    }
-    gps_md.ntrip.reconnect_timeout = esp_timer_get_time() + 1000000;
-
-    EventBits_t ev = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1 / portTICK_PERIOD_MS);
-    if(ev != CONNECTED_BIT)
-    {
-        return;
-    }
-
-    // Configure host URL
-    esp_http_client_config_t config = {
-        .host = gps_md.ntrip.host,
-        .port = gps_md.ntrip.port,
-        .method = HTTP_METHOD_GET,
-    };
-    config.path = (const char*)gps_md.ntrip.mountpoint;
-    config.auth_type = HTTP_AUTH_TYPE_BASIC;
-    config.username = (const char*)gps_md.ntrip.username;
-    config.password = (const char*)gps_md.ntrip.password;
-    config.event_handler = gps_ntrip_http_event_handle;
-#ifdef ENABLE_ASYNC_HTTP_CLIENT
-    config.is_async = true;
-    config.timeout_ms = 10;
-#endif
-
-    // Initialize client
-    gps_md.ntrip.http = esp_http_client_init(&config);
-#ifdef ENABLE_ASYNC_HTTP_CLIENT
-    ... todo ...
-#else
-    esp_http_client_set_header(gps_md.ntrip.http, "Ntrip-Version", "Ntrip/2.0");
-    esp_http_client_set_header(gps_md.ntrip.http, "User-Agent", "NTRIP " NTRIP_CLIENT_NAME "/2.0");
-    esp_http_client_set_header(gps_md.ntrip.http, "Connection", "close");
-
-    esp_err_t err = esp_http_client_open(gps_md.ntrip.http, 0);
-    if( err != ESP_OK )
-    {
-        ESP_LOGE(TAG, "Could not open HTTP connection: %d %s", err, esp_err_to_name(err));
-        gps_ntrip_stop();
-        return;
-    }
-
-    int content_length = esp_http_client_fetch_headers(gps_md.ntrip.http);
-    if( content_length < 0 )
-    {
-        ESP_LOGE(TAG, "Could not connect to caster: %d %s", errno, strerror(errno));
-        gps_ntrip_stop();
-        return;
-    }
-
-    int status_code = esp_http_client_get_status_code(gps_md.ntrip.http);
-    if( status_code != 200 )
-    {
-        ESP_LOGE(TAG, "Could not access mountpoint: %d", status_code);
-        gps_ntrip_stop();
-        return;
-    }
-
-    if( !esp_http_client_is_chunked_response(gps_md.ntrip.http) )
-    {
-        ESP_LOGE(TAG, "Caster did not respond with chunked transfer encoding: content_length %d", content_length);
-        gps_ntrip_stop();
-        return;
-    }
-#endif
-
-    if(uart_is_driver_installed(UART_NUM_1))
-    {
-        sprintf((char*)gps_rx_buffer,"$PESP,NTRIP,SRV,CONNECTED,%s:%d,%s", 
-        gps_md.ntrip.host, gps_md.ntrip.port, gps_md.ntrip.mountpoint);
-        uart_write_bytes(UART_NUM_1, (const char*)gps_rx_buffer, strlen((char*)gps_rx_buffer));
-    }
-
-    ESP_LOGI(TAG, "Successfully connected");
-}
-    
-/**
- * @brief 
- */
-static void gps_ntrip_handle()
-{
-#ifndef ENABLE_NTRIP_TEST
-    if(gps_md.ntrip.http == NULL && gps_md.uart.gga.position_fix > 0)
-#endif
-    {
-        gps_ntrip_start();
-    }
-
-    if(gps_md.ntrip.http != NULL)
-    {
-        ESP_LOGI(TAG, "gps_ntrip_handle ...");
-#ifdef ENABLE_ASYNC_HTTP_CLIENT
-        ... todo ...
-#else
-        char* buffer = (char*)malloc(BUFFER_SIZE);
-        if(buffer != NULL)
-        {
-            int len;
-            while((len = esp_http_client_read(gps_md.ntrip.http, buffer, BUFFER_SIZE)) >= 0)
-            {
-                if(powerstate() == 0)
-                {
-                    break; /* stop GPS when power down */
-                }
-                gps_uart_handle();
-                gps_tcpserv_handle();
-            }
-            free(buffer);
-        }
-#endif
-        ESP_LOGI(TAG, "gps_ntrip_handle ... done");
-    }
-}
-
-/**
- * @brief 
+ * @brief
  * @param buflen
  * @param buf
  */
 static void gps_handle_nmea(int buflen, const char* buf)
 {
-    static char linebuf[1024];
+    static char linebuf[512];
     static int linebuf_used = 0;
     int i;
     for(i = 0; i < buflen; i++)
@@ -467,17 +463,10 @@ static void gps_handle_nmea(int buflen, const char* buf)
         {
             if(linebuf_used > 1)
             {
-                if(gps_md.ntrip.http != NULL)
-                {
-                    linebuf[linebuf_used + 1] = 0;
-                    // ESP_LOGW(TAG, "=>sapos: %d %s", linebuf_used+1,linebuf);
-                    int sent = esp_http_client_write(gps_md.ntrip.http, (char*)linebuf, linebuf_used + 1);
-                    if(sent < 0)
-                    {
-                        gps_ntrip_stop();
-                    }
-                }
+                char linebuf_bak[sizeof(linebuf)] = {};
+                //ESP_LOGW(TAG,"F9P: %s", linebuf);
 
+                strncpy(linebuf_bak,linebuf,linebuf_used + 1);
                 if(linebuf_used >= 3)
                 {
                     if(linebuf[0] == '$' && linebuf[1] == 'G' && linebuf[2] == 'N')
@@ -492,15 +481,29 @@ static void gps_handle_nmea(int buflen, const char* buf)
                     if(NMEA_GPGGA == p->type)
                     {
                         gps_md.uart.gga = *((nmea_gpgga_s*)p);
-#if 1
-                        ESP_LOGW(TAG, "fix=%d N=%d lat=%d.%f long=%d.%f", 
-                            gps_md.uart.gga.position_fix, 
-                            gps_md.uart.gga.n_satellites,
-                            gps_md.uart.gga.latitude.degrees, 
-                            gps_md.uart.gga.latitude.minutes, 
-                            gps_md.uart.gga.longitude.degrees,
-                            gps_md.uart.gga.longitude.minutes);
-#endif
+                                                
+                        if(gps_md.ntrip.gga_print_timeout < esp_timer_get_time())
+                        {
+                            gps_md.ntrip.gga_print_timeout = esp_timer_get_time() + 3000000;
+                            ESP_LOGW(TAG, "fix=%d N=%d pos=(%d %f %d %f) ntrip-rx=%d", gps_md.uart.gga.position_fix,
+                                gps_md.uart.gga.n_satellites, gps_md.uart.gga.latitude.degrees,
+                                gps_md.uart.gga.latitude.minutes, gps_md.uart.gga.longitude.degrees,
+                                gps_md.uart.gga.longitude.minutes,
+                                gps_md.ntrip.ntrip_rx_bytes);
+                        }
+                        
+                        if(gps_md.uart.gga.position_fix > 0)
+                        {
+                            strncpy(gps_md.ntrip.gga_line, linebuf_bak, linebuf_used + 1);
+                            gps_md.ntrip.gga_line[linebuf_used + 1] = 0;
+                            //ESP_LOGW(TAG, "XXX %s", gps_md.ntrip.gga_line);
+                            gps_ntrip_start();
+                        }
+                        else
+                        {
+                            gps_ntrip_stop();
+                        }
+
                     }
                     nmea_free(p);
                 }
@@ -519,20 +522,20 @@ static void gps_handle_nmea(int buflen, const char* buf)
 }
 
 /**
- * @brief 
+ * @brief
  */
 static void gps_uart_stop()
-{    
-    if( uart_is_driver_installed(UART_NUM_1) )
+{
+    if(uart_is_driver_installed(UART_NUM_1))
     {
         ESP_LOGI(TAG, "gps_uart_stop");
         uart_driver_delete(UART_NUM_1);
-        memset((void*)&gps_md.uart,0,sizeof(gps_md.uart));
+        memset((void*)&gps_md.uart, 0, sizeof(gps_md.uart));
     }
 }
 
 /**
- * @brief 
+ * @brief
  */
 static void gps_uart_start()
 {
@@ -570,17 +573,20 @@ static void gps_uart_start()
     }
 }
 /**
- * @brief 
+ * @brief
  */
 static void gps_uart_handle()
 {
     if(uart_is_driver_installed(UART_NUM_1))
     {
         // ESP_LOGI(TAG, "gps_uart_handle");
-        int len =
-            uart_read_bytes(UART_NUM_1, gps_rx_buffer, RXBUF_SIZE, (1 + (RXBUF_SIZE / (10 * 3))) / portTICK_RATE_MS);
+        int tout = (1 + (RXBUF_SIZE / (10 * 3)));
+        if(tout > 50)
+            tout = 20;
+        int len = uart_read_bytes(UART_NUM_1, gps_rx_buffer, RXBUF_SIZE, tout / portTICK_RATE_MS);
         if(len > 0)
         {
+            //            if( len > ((RXBUF_SIZE)/2) ) ESP_LOGE(TAG, "gps_uart_handle %d",len);
             if(gps_md.tcpserv.client_sock != 0)
             {
                 send(gps_md.tcpserv.client_sock, gps_rx_buffer, len, 0);
@@ -593,7 +599,7 @@ static void gps_uart_handle()
 }
 
 /**
- * @brief 
+ * @brief
  * @param pvParameters
  */
 static void gps_task(void* pvParameters)
@@ -605,7 +611,6 @@ static void gps_task(void* pvParameters)
 
     while(true)
     {
-        EventBits_t ev;
         const int gps_wait = 1000;
 
         ESP_LOGI(TAG, "Wait until power is on ... ");
@@ -617,9 +622,6 @@ static void gps_task(void* pvParameters)
 
         gps_uart_start();
         gps_tcpserv_start();
-#ifdef ENABLE_NTRIP_TEST
-        gps_ntrip_start();
-#endif
 
         while(true)
         {
@@ -630,7 +632,7 @@ static void gps_task(void* pvParameters)
 
             gps_uart_handle();
             gps_tcpserv_handle();
-            gps_ntrip_handle();
+            // gps_ntrip_handle();
         }
 
         gps_ntrip_stop();
@@ -641,7 +643,7 @@ static void gps_task(void* pvParameters)
 }
 
 /**
- * @brief 
+ * @brief
  */
 void gps_init()
 {
@@ -662,24 +664,18 @@ void gps_init()
         nvs_close(my_handle);
     }
 
-    ESP_LOGI(TAG, "gps_init host=%s:%d user=%s passwd=%s mointpoint=%s", 
-        gps_md.ntrip.host, 
-        gps_md.ntrip.port, 
-        gps_md.ntrip.username,
-        gps_md.ntrip.password,
-        gps_md.ntrip.mountpoint);
+    ESP_LOGI(TAG, "gps_init host=%s:%d user=%s passwd=%s mountpoint=%s", gps_md.ntrip.host, gps_md.ntrip.port,
+        gps_md.ntrip.username, gps_md.ntrip.password, gps_md.ntrip.mountpoint);
 
-    if(gps_md.ntrip.port != 0 && 
-        strlen(gps_md.ntrip.host) != 0 && 
-        strlen(gps_md.ntrip.username) != 0 &&
-        strlen(gps_md.ntrip.password) != 0 &&
-        strlen(gps_md.ntrip.mountpoint) != 0)
+    if(gps_md.ntrip.port != 0 && strlen(gps_md.ntrip.host) != 0 && strlen(gps_md.ntrip.username) != 0 &&
+        strlen(gps_md.ntrip.password) != 0 && strlen(gps_md.ntrip.mountpoint) != 0)
     {
-        xTaskCreate(gps_task, "gps_task", 16384, NULL, DEFAULT_PRIO, NULL);
+        xTaskCreate(ntrip_task, "ntrip_task", 4096, NULL, DEFAULT_PRIO, NULL);
+        xTaskCreate(gps_task, "gps_task", 4096, NULL, DEFAULT_PRIO, NULL);
     }
 }
 /**
- * @brief 
+ * @brief
  */
 void gps_exit()
 {
