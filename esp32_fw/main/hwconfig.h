@@ -28,7 +28,7 @@
 //#define I2C_BUS_SCL 27
 
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#define MOTORNODE_I2C_ADDR  0x0a
+#define MOTORNODE_I2C_ADDR  0x0b
 #endif
 
 #define MOTOR_GEAR_N (18*7*23)
@@ -116,7 +116,7 @@
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA 13
 #define I2C_BUS_SCL 12
-#define I2C_BUS_INT 4
+#define I2C_BUS_INT 14
 
 #define ROS2_NODENAME "ros2s2"
 #define HOSTNAME "ros2s2"
@@ -134,14 +134,23 @@
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA 13
 #define I2C_BUS_SCL 15
-#define I2C_BUS_INT 4
+#define I2C_BUS_INT 11
+#define I2C_BUS_RESET 14
 
 #define ROS2_NODENAME "s2mower"
 #define HOSTNAME "ros2mower_s2"
 
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#define MOTORNODE_I2C_ADDR  0x0a
+#define MOTORNODE_I2C_ADDR  0x0b
 #endif
+
+#define MOTOR_GEAR_N (18*7*23)
+#define MOTOR_RPS(_rps_) (int)((_rps_) * MOTOR_GEAR_N)
+#define MOTOR_RPM(_rpm_) (MOTOR_RPS(_rpm_) / 60.0)
+#define MOTOR_MAX_RPS (45.0 / 60.0)
+#define MOTOR_WHEEL_D 0.175
+#define MOTOR_START_RPM_L 0.0
+#define MOTOR_START_RPM_R 0.0
 
 #define GPIO_PWR_ON 5
 //#define GPIO_PWR_BUS_ON 25

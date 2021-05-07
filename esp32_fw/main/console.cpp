@@ -59,6 +59,9 @@ static bool con_log_on = true;
 #ifdef CONFIG_PM_ENABLE
 esp_pm_lock_handle_t con_pmlock;
 #endif
+
+static int log_socket = -1;
+
 /**
  * @brief 
  * @return 

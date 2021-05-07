@@ -876,13 +876,13 @@ void i2c_handle_cmd_vel()
 #endif
 
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#ifdef CONFIG_ROS2NODE_HW_ROS2MOWER
+#if defined(CONFIG_ROS2NODE_HW_ROS2MOWER) || defined(CONFIG_ROS2NODE_HW_S2_MOWER)
         i2cnode_set_i16(MOTORNODE_I2C_ADDR, 0x20, MOTOR_RPS(wheel0_speed));
         i2cnode_set_i16(MOTORNODE_I2C_ADDR, 0x40, MOTOR_RPS(wheel1_speed));
 
         ESP_LOGW(TAG, "i2c_handle_cmd_vel() %frps %frps %d %d", wheel0_speed, wheel1_speed, MOTOR_RPS(wheel0_speed),
             MOTOR_RPS(wheel1_speed));
-#endif // CONFIG_ROS2NODE_HW_ROS2MOWER
+#endif // defined(CONFIG_ROS2NODE_HW_ROS2MOWER) || defined(CONFIG_ROS2NODE_HW_S2_MOWER)
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
         uint8_t tmpbuf[4] = {};
         tmpbuf[0] = (MOTOR_RPS(wheel0_speed) >> 8) & 0xff;
@@ -931,13 +931,23 @@ bool i2c_cmd_vel_active()
  */
 void i2cnode_init_motor()
 {
-#ifdef CONFIG_ENABLE_I2C_MOTOR
-#ifdef CONFIG_ROS2NODE_HW_ROS2MOWER
+#if defined(CONFIG_ROS2NODE_HW_ROS2MOWER) || defined(CONFIG_ROS2NODE_HW_S2_MOWER)
+#ifdef CONFIG_ENABLE_I2C_POWER
     try
     {
         i2cnode_set_u16(PWRNODE_I2C_ADDR, 0x10, 60);    // update TWI_MEM_SHDWNCNT
         i2cnode_set_u16(PWRNODE_I2C_ADDR, 0x18, 13000); // stay on with ubat>12.5V
-
+    }
+    catch(int err)
+    {
+        i2c_setpin_boot(1);
+        ESP_LOGE(TAG, "I2C exception err=0x%02x", err);
+        i2c_setpin_boot(0);
+    }
+#endif
+#ifdef CONFIG_ENABLE_I2C_MOTOR
+    try
+    {
         i2cnode_set_i16(MOTORNODE_I2C_ADDR, 0x20, (int16_t)MOTOR_P);
         i2cnode_set_i16(MOTORNODE_I2C_ADDR, 0x22, (int16_t)MOTOR_I);
         i2cnode_set_i16(MOTORNODE_I2C_ADDR, 0x24, (int16_t)MOTOR_D);
@@ -1831,12 +1841,12 @@ static void i2c_task(void* param)
         {
 
 #ifdef CONFIG_ENABLE_I2C_POWER
-#ifdef CONFIG_ROS2NODE_HW_ROS2MOWER
+#if defined(CONFIG_ROS2NODE_HW_ROS2MOWER) || defined(CONFIG_ROS2NODE_HW_S2_MOWER)
             i2c_md.ubat_mV = i2cnode_get_u16(PWRNODE_I2C_ADDR, 0x28);
             i2c_md.isolar_mA = i2cnode_get_i16(PWRNODE_I2C_ADDR, 0x30);
             i2c_md.iout_mA = i2cnode_get_i16(PWRNODE_I2C_ADDR, 0x32);
             i2c_md.icharge_mA = i2cnode_get_i16(PWRNODE_I2C_ADDR, 0x34);
-#endif // CONFIG_ROS2NODE_HW_ROS2MOWER
+#endif // defined(CONFIG_ROS2NODE_HW_ROS2MOWER) || defined(CONFIG_ROS2NODE_HW_S2_MOWER)
 #ifdef CONFIG_ROS2NODE_HW_ROS2ZUMO
             i2c_md.ubat_mV = i2cnode_get_u16(STM32_I2C_ADDR, 0x5a);
 #endif // CONFIG_ROS2NODE_HW_ROS2ZUMO
@@ -1926,7 +1936,7 @@ static void i2c_task(void* param)
 #endif
 
             i2c_set_cmd_vel(0.0, 0.0, 0.0 /* rad/sec*/);
-            // i2c_set_cmd_vel( 0.0, 0.0, -2*M_PI / 20.0 /* rad/sec*/ );
+            i2c_set_cmd_vel( 0.0, 0.0, -2*M_PI / 20.0 /* rad/sec*/ );
             i2c_handle_cmd_vel();
 
 #ifdef CONFIG_ENABLE_I2C_POWER
@@ -2011,6 +2021,7 @@ void i2c_int(int level)
     if(level == 1)
     {
         gpio_set_direction((gpio_num_t)I2C_BUS_INT, GPIO_MODE_INPUT);
+        //gpio_set_direction((gpio_num_t)I2C_BUS_INT, GPIO_MODE_OUTPUT);
         gpio_set_pull_mode((gpio_num_t)I2C_BUS_INT, GPIO_PULLUP_ONLY);
         gpio_set_level((gpio_num_t)I2C_BUS_INT, 1);
     }
@@ -2019,6 +2030,25 @@ void i2c_int(int level)
         gpio_set_direction((gpio_num_t)I2C_BUS_INT, GPIO_MODE_OUTPUT);
         gpio_set_pull_mode((gpio_num_t)I2C_BUS_INT, GPIO_PULLUP_ONLY);
         gpio_set_level((gpio_num_t)I2C_BUS_INT, 0);
+    }
+#endif
+}
+
+void i2c_reset(int level)
+{
+#ifdef I2C_BUS_RESET
+    if(level == 1)
+    {
+        gpio_set_direction((gpio_num_t)I2C_BUS_RESET, GPIO_MODE_INPUT);
+        //gpio_set_direction((gpio_num_t)I2C_BUS_RESET, GPIO_MODE_OUTPUT);
+        gpio_set_pull_mode((gpio_num_t)I2C_BUS_RESET, GPIO_PULLUP_ONLY);
+        gpio_set_level((gpio_num_t)I2C_BUS_RESET, 1);
+    }
+    else
+    {
+        gpio_set_direction((gpio_num_t)I2C_BUS_RESET, GPIO_MODE_OUTPUT);
+        gpio_set_pull_mode((gpio_num_t)I2C_BUS_RESET, GPIO_PULLUP_ONLY);
+        gpio_set_level((gpio_num_t)I2C_BUS_RESET, 0);
     }
 #endif
 }
@@ -2056,8 +2086,10 @@ void i2c_handler_init()
 #ifdef I2C_BUS_INT
     gpio_reset_pin((gpio_num_t)I2C_BUS_INT);
 #endif
+    i2c_reset(0);
     i2c_int(1);
-
+    i2c_reset(1);
+    
     static i2c_config_t Config;
     memset(&Config, 0, sizeof(i2c_config_t));
     Config.mode = I2C_MODE_MASTER;
