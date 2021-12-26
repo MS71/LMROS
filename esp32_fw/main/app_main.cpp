@@ -537,11 +537,11 @@ void beep(int onoff)
 #endif
 }
 
-static uint8_t power_pin = 0;
-void powersw(bool onoff)
+bool forcepower_on = false;
+void forcepoweron(bool onoff)
 {
-#ifdef CONFIG_ROS2NODE_HW_S2_MOWER
-    ESP_LOGE(TAG, "powersw %d", onoff);
+    forcepower_on = onoff;
+    ESP_LOGE(TAG, "forcepoweron %d", onoff);
     gpio_num_t gpio;
     gpio = (gpio_num_t)GPIO_PWR_ON;
     gpio_hold_dis(gpio);
@@ -549,18 +549,40 @@ void powersw(bool onoff)
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(gpio, (onoff == true) ? 1 : 0);
     gpio_hold_en(gpio);
-    power_pin = (onoff == true) ? 1 : 0;
+}
 
-#if 0
-    gpio = (gpio_num_t)GPIO_PWR_BUS_ON;
+static uint8_t power_pin = 0;
+void powersw(bool onoff)
+{
+    uint8_t _power_pin = power_pin;
+    ESP_LOGE(TAG, "powersw %d", onoff);
+    if(forcepower_on == true)
+    {
+        onoff = true;
+    }
+    gpio_num_t gpio;
+    gpio = (gpio_num_t)GPIO_PWR_ON;
     gpio_hold_dis(gpio);
     gpio_set_pull_mode(gpio, GPIO_PULLUP_PULLDOWN);
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
-	gpio_set_level(gpio, (onoff==true)?1:0);
+    gpio_set_level(gpio, (onoff == true) ? 1 : 0);
     gpio_hold_en(gpio);
-#endif
+    _power_pin = (onoff == true) ? 1 : 0;
 
+#ifdef CONFIG_ENABLE_I2C
+    if(power_pin != _power_pin)
+    {
+        if(_power_pin == 1)
+        {
+            i2c_handler_start();
+        }
+        else
+        {
+            i2c_handler_stop();
+        }
+    }
 #endif
+    power_pin = _power_pin;
 }
 
 uint8_t powerstate()
@@ -735,7 +757,7 @@ static void adc1_timer_callback(void* arg)
         enter_sleep = false;       
     }
         
-    if(enter_sleep==true) 
+    if((enter_sleep==true) && (forcepower_on == false))
     {
         /* shutdown
          */
@@ -968,6 +990,9 @@ void app_main(void)
 #ifdef CONFIG_ENABLE_I2C
     ESP_LOGI(TAG, "init I2C ...");
     i2c_handler_init();
+#ifndef CONFIG_ROS2NODE_HW_S2_MOWER
+    i2c_handler_start();
+#endif
 #endif
 
 #ifdef CONFIG_ENABLE_SDCARD

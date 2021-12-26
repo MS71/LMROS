@@ -141,8 +141,10 @@
 #define HOSTNAME "ros2mower_s2"
 
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#define MOTORNODE_I2C_ADDR  0x0b
+#define MOTORNODE_I2C_ADDR  0x0d
 #endif
+
+#define LAWNMOTORNODE_I2C_ADDR  0x0e
 
 #define MOTOR_GEAR_N (18*7*23)
 #define MOTOR_RPS(_rps_) (int)((_rps_) * MOTOR_GEAR_N)
@@ -151,6 +153,9 @@
 #define MOTOR_WHEEL_D 0.175
 #define MOTOR_START_RPM_L 0.0
 #define MOTOR_START_RPM_R 0.0
+
+#define WHEEL_DIAMETER 0.175
+#define WHEEL_DISTANCE 0.35
 
 #define GPIO_PWR_ON 5
 //#define GPIO_PWR_BUS_ON 25
@@ -163,8 +168,8 @@
 
 #define I2C_BNO055_ADDR 0x28
 
-#define I2C_TIMEOUT_MS 10
-#define I2C_BUS_CLOCK       400000
+#define I2C_TIMEOUT_MS  10
+#define I2C_BUS_CLOCK   400000
 
 #ifdef CONFIG_ENABLE_I2C_OLED
 #define OLED_I2C_ADDR  0x78
@@ -178,6 +183,7 @@
 #define UBAT_DF      0.3
 
 void powersw(bool onoff);
+void forcepoweron(bool onoff);
 void pm_ref();
 void pm_unref();
 int pm_cnt();

@@ -4,7 +4,12 @@
 #include "hwconfig.h"
 
 void i2c_handler_init();
+void i2c_handler_start();
+void i2c_handler_stop();
 void i2c_set_cmd_vel(double x, double y, double z);
+void i2c_set_lawn_motor_speed(double speed);
+void i2c_set_motor_pid(int motor, int p, int i , int d);
+void i2c_start_pid_tuning(int motor);
 bool i2c_lock();
 void i2c_release();
 
@@ -12,6 +17,7 @@ esp_err_t i2cnode_check(uint8_t i2caddr);
 esp_err_t i2cnode_read(uint8_t i2caddr, uint8_t regaddr, uint8_t *buf, uint32_t buflen);
 esp_err_t i2cnode_read(uint8_t i2caddr, uint8_t *buf, uint32_t buflen);
 esp_err_t i2cnode_write(uint8_t i2caddr, uint8_t regaddr, uint8_t *buf, uint32_t buflen); 
+esp_err_t i2cnode_write(uint8_t i2caddr, uint8_t regaddr, uint8_t *buf, uint32_t buflen, int timeout); 
 void i2cnode_set_u16(uint8_t i2caddr, uint8_t regaddr, uint16_t v) /* throw(int) */;
 void i2cnode_init_motor();
 
@@ -24,6 +30,8 @@ void i2c_int(int level);
 extern "C" {
 void i2c_setpin_boot(int level);
 }
+
+void i2c_reset(int level);
 
 #ifdef CONFIG_ENABLE_ROS2
 #include <std_msgs/msg/float32.h>
@@ -76,5 +84,7 @@ typedef struct
 I2CROS2SensorData* i2c_lock_data();
 void i2c_release_data();
 #endif
+
+void i2c_updater();
 
 #endif /* _I2CHANDLER_H_ */

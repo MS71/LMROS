@@ -1,4 +1,4 @@
-idf_component_register(SRCS "app_main.cpp" "ros2node.cpp" "cam.cpp" "console.cpp" "gps.cpp" "i2chandler.cpp" "webui.cpp" "wifi.cpp" "libnmea/nmea/nmea.c" "libnmea/nmea/parser_static.c" "libnmea/parsers/gpgga.c" "libnmea/parsers/parse.c"  INCLUDE_DIRS . ulp)
+idf_component_register(SRCS "app_main.cpp" "ros2node.cpp" "cam.cpp" "console.cpp" "gps.cpp" "i2chandler.cpp" "webui.cpp" "wifi.cpp" "i2c_updater.cpp" "libnmea/nmea/nmea.c" "libnmea/nmea/parser_static.c" "libnmea/parsers/gpgga.c" "libnmea/parsers/parse.c"  INCLUDE_DIRS . ulp)
 set(COMPONENT_REQUIRES ulp server websocket micro-ROS libnmea/nmea libnmea/parsers )
 
 add_compile_definitions(PARSER_COUNT=1 ENABLE_GPGGA=1)

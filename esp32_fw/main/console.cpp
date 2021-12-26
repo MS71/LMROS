@@ -79,7 +79,6 @@ void con_printf(const char* fmt, ...)
 { 
     if( con_sock != -1 )
     {
-        //char linebuf[180];
         va_list arglist;
         va_start( arglist, fmt );
         int n = vsnprintf( con_log_linebuf, sizeof(con_log_linebuf), fmt, arglist );
@@ -127,16 +126,34 @@ void console_try_remote()
             struct sockaddr_in destAddr;
             destAddr.sin_addr.s_addr = inet_addr(host_name);
             destAddr.sin_family = AF_INET;
+            destAddr.sin_port = htons(host_port+1);
+            addr_family = AF_INET;
+            ip_protocol = IPPROTO_IP;
+            inet_ntoa_r(destAddr.sin_addr, addr_str, sizeof(addr_str) - 1);
+
+            log_socket = socket(addr_family, SOCK_STREAM, ip_protocol);
+            connect(log_socket, (struct sockaddr*)&destAddr, sizeof(destAddr));
+            if( log_socket != -1 )
+            {
+                send(log_socket, "###\n", sizeof("###\n"), 0);
+            }
+            else
+            {
+                ESP_LOGW(TAG, "connecting to log socket failed(%s,%d)", host_name, host_port+1);
+            }
+            
+            destAddr.sin_addr.s_addr = inet_addr(host_name);
+            destAddr.sin_family = AF_INET;
             destAddr.sin_port = htons(host_port);
             addr_family = AF_INET;
             ip_protocol = IPPROTO_IP;
             inet_ntoa_r(destAddr.sin_addr, addr_str, sizeof(addr_str) - 1);
 
+
             con_printf("socket ...\n");
             int sock = socket(addr_family, SOCK_STREAM, ip_protocol);
             con_printf("connect ... %d\n",sock);
             int err = connect(sock, (struct sockaddr*)&destAddr, sizeof(destAddr));
-
             con_printf("%d\n",err);
 
             if(err != -1) 
@@ -196,11 +213,20 @@ void con_i2c_detect()
  */
 int con_log(const char *format, va_list args)
 {
-	if( con_log_on == false )
-	{
+    if( log_socket != -1 )
+    {
+        vsnprintf (con_log_linebuf, sizeof(con_log_linebuf)-1, format, args);
+        int n = strlen(con_log_linebuf);	
+        if(n > 0)
+        {
+            send(log_socket, con_log_linebuf, n, 0);
+        }
+    }
+	else if( con_log_on == false )
+	{        
 		return 1;
 	}
-    if( con_sock != -1 )
+    else if( con_sock != -1 )
     {
         vsnprintf (con_log_linebuf, sizeof(con_log_linebuf)-1, format, args);
         int n = strlen(con_log_linebuf);	
@@ -312,6 +338,14 @@ static void con_handle()
             {
                 powersw(true);
             }
+            else if(strcasecmp("forcepwron",rx_buffer)==0 )
+            {
+                forcepoweron(true);
+            }
+            else if(strcasecmp("forcepwroff",rx_buffer)==0 )
+            {
+                forcepoweron(false);
+            }
             else if(strcasecmp("restart",rx_buffer)==0 )
             {
                 con_printf("restarting ...\n");
@@ -344,10 +378,6 @@ static void con_handle()
                 con_printf("rebooting ...\n");
             }
 #endif
-            else if(strcasecmp("test",rx_buffer)==0 )
-            {
-                i2cnode_init_motor();
-            }
             else if(strcasecmp("spifs_info",rx_buffer)==0)
             {
                 size_t total = 0, used = 0;
@@ -366,6 +396,7 @@ static void con_handle()
             {
                 /* i2cget i2caddr regaddr numbytes repeats
 				 * i2cget 0x0a 0x00 32 10000000
+                 * i2cget 0x0e 0x60 16 1
                  */
                 int errcnt = 0;
                 int p1 = 0;
@@ -412,6 +443,10 @@ static void con_handle()
             else if(strstr(rx_buffer,"i2cset")==rx_buffer)
             {
                 /* i2cset i2caddr regaddr numbytes xxXXxxXXxxXX
+                 * i2cset 0x0e 0x08 0300 
+                 * i2cget 0x0e 0x08 2
+                 * i2cset 0x0e 0x27 30
+                 * i2cget 0x0e 0x27 1
                  */
                 int p1 = 0;
                 int p2 = 0;
@@ -476,10 +511,10 @@ static void con_handle()
                     con_printf("remote console host=%s port=%d\n",host_name,host_port);
                 }
             }
-            else if(strstr(rx_buffer,"con_remote_set_loglevel")==rx_buffer)
+            else if(strstr(rx_buffer,"con_set_loglevel")==rx_buffer)
             {
                 int p1 = 0;
-                int n = sscanf(rx_buffer,"con_remote_set_loglevel %d",&p1);
+                int n = sscanf(rx_buffer,"con_set_loglevel %d",&p1);
                 if( n==1 )
                 {
                     con_nfs_set_int("console","loglevel",p1);
@@ -655,7 +690,7 @@ static void con_handle()
             }
 #endif
 #ifdef CONFIG_ENABLE_I2C_MOTOR
-#define CMD_VEL_SPEED       0.01
+#define CMD_VEL_SPEED       0.05
 #define CMD_VEL_ROTFAST     (2.0*M_PI / 25.0)  
             else if(strcasecmp("8",rx_buffer)==0)
             {
@@ -677,8 +712,43 @@ static void con_handle()
             {
                 i2c_set_cmd_vel(0.0,0.0,-CMD_VEL_ROTFAST);
             }
-#endif            
-            else
+            else if(strcasecmp("/",rx_buffer)==0)
+            {
+                i2c_set_lawn_motor_speed(30);
+            }
+            else if(strcasecmp("*",rx_buffer)==0)
+            {
+                i2c_set_lawn_motor_speed(0);
+            }
+            else if(strcasecmp("-",rx_buffer)==0)
+            {
+                i2c_set_lawn_motor_speed(-30);
+            }
+           else if(strstr(rx_buffer, "set_pid") == rx_buffer)
+            {
+                int p1 = 0;
+                int p2 = 0;
+                int p3 = 0;
+                int p4 = 0;
+                int n = sscanf(rx_buffer, "set_pid %d %d %d %d", &p1, &p2, &p3, &p4 );
+                if(n == 4)
+                {
+                    con_printf("n=%d set_pid %d %d %d %d\n", n, p1, p2, p3, p4);
+                    i2c_set_motor_pid(p1,p2,p3,p4);
+                }
+            }
+           else if(strstr(rx_buffer, "tune_pid") == rx_buffer)
+            {
+                int p1 = 0;
+                int n = sscanf(rx_buffer, "tune_pid %d", &p1);
+                if(n == 1)
+                {
+                    con_printf("n=%d tune_pid %d \n", n, p1);
+                    i2c_start_pid_tuning(p1);
+                }
+            }
+#endif
+             else
             {
                 for(int i=0;i<len;i++) con_printf("%02x",rx_buffer[i]); 
                 con_printf("|%s\n",rx_buffer);
@@ -697,10 +767,12 @@ void console()
     int ip_protocol = 0;
     struct sockaddr_in6 dest_addr;
 
+#if 0
     if( con_nfs_get_int("console","loglevel",-1) != -1 )
     {
         con_deflog = esp_log_set_vprintf(con_log);
     }
+#endif
 
     console_try_remote();
     
